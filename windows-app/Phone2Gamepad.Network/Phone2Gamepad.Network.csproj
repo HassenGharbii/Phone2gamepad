@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><NoWarn>CA1416</NoWarn></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Phone2Gamepad.Core\Phone2Gamepad.Core.csproj" />
+    <ProjectReference Include="..\Phone2Gamepad.VirtualGamepad\Phone2Gamepad.VirtualGamepad.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+  </ItemGroup>
+</Project>

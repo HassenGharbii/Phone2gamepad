@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Phone2Gamepad.Network\Phone2Gamepad.Network.csproj" />
+  </ItemGroup>
+</Project>

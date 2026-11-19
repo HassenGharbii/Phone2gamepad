@@ -162,3 +162,31 @@ Verified on the real phone against the real PC (XInput log):
 - No crash lines in logcat.
 
 Not verified: tilt direction and scale (adb cannot tilt the phone; the sensor did drive the wheel and Recenter zeroed it); pedal haptic ticks (cannot feel/measure over adb); multi-finger use of wheel + pedal at once on the phone (unit-tested only); paddle shifters on the phone; the 'lower = more pressed' pedal direction is a change from before (default now like the triggers; switch in Tuning); a real game.
+
+## Android UI/UX round 6 (2026-11-19)
+
+175 JVM unit tests pass (new `UxLogicTest`: PIN sanitizing/paste, auto-submit completeness, start screen, Home auto-connect rule, discovery help timing, pairing error messages, connection summaries).
+
+Checked on the real phone (Infinix, Android 14) with before/after screenshots:
+- Returning user lands on the new Home and auto-connects to the real PC with no PIN; Play opens the pad; "Exit to home" returns to Home with the session kept.
+- New gamepad HUD (status pill + menu button); menu items Edit layout / Controller type & art / Skins / Tuning / Hide status / Exit to home.
+- Customize hub, Settings, Skins, Tuning, Controller type & art dialog in portrait; Home, Customize and Settings in landscape (two-pane layouts).
+- First-run screens via Settings → "Preview first-run screens" (debug builds only; pairing kept). PIN entry, wrong-PIN message, "Approve on your PC" waiting state and successful pairing were exercised against a local fake PC on port 47831; the phone was then switched back to the real PC without a PIN.
+- Tap on A gave `btn=0x1000` in XInput after the changes. System font scale 1.3 checked on Home and Settings (restored to 1.0). No crash lines in logcat.
+
+Not checked: TalkBack walkthrough, the Xbox and Fighting pads after the HUD change (only Racing was viewed), skin creator and layout editor restyling (unchanged), light theme (not built).
+
+## Windows UI/UX round (2026-11-19)
+
+Suite: **104 tests** (was 85). New `PresentationTests` (19) cover the pure UI rules moved to `Phone2Gamepad.Core.Presentation`: metrics show "—" when unavailable (never fake numbers), relative "last connected" times, PIN grouping/countdown, home-status priorities (driver missing > server error > server off > playing/stale > pairing > idle), LAN address ranking (Wi-Fi/Ethernet with gateway first; Hyper-V/WSL and 169.254 last), window placement clamped to the monitor work area (first run, off-screen, removed monitor, garbage values), duplicate-button detection in the mapping editor, and the new settings fields (theme, notifications, window bounds, local phone names) with sanitising.
+
+Verified by running the rebuilt app as an isolated test instance (`--instance test --settings <tmp> --store <tmp>`, ports 50020–50022) and reading screenshots:
+- Every page in the new design (Home, Controller, Phones, Mapping, Diagnostics, Settings), dark and light themes, compact navigation at an 820 px window, and a 1.2× layout scale (≈150 % on this 125 % display; `--ui-scale` test switch, no display settings changed). No clipping found.
+- First-run checklist, "Driver needed" state (`--simulate-missing-driver`), server-off state, pairing with live PIN + countdown ring.
+- Pairing prompt: Allow is disabled for 1.5 s (protects against a click landing on a prompt that pops up under the pointer), focus starts on "Don't allow", Esc denies. The decision and its input device are logged.
+- TestClient (`hold`: A + LT + left stick 20000) drove a real session: Home showed "Playing — Pixel 8 (test)", latency 1 ms, 34 packets/s, session timer; the controller drawing and raw values (20000, 0 / LT 255 / A) matched the input.
+- Phones: rename (stored locally) and the remove confirmation dialog (cancelled).
+- Mapping: mapping A→B is flagged "Used twice", not applied, and explained; Reset restores it.
+
+Not verified: tray context menu and balloon notifications visually (the icon sits in the taskbar overflow), Windows high-contrast themes (dictionary written, not exercised), screen-reader output (names were checked through UI Automation only), real per-monitor DPI changes.
+Note: during these runs the pairing prompts in the isolated test instance were approved with the mouse by someone at the PC within seconds (logged as "approved on this PC (mouse)"), and "bv" was typed into a rename box — the automation never clicks Allow.

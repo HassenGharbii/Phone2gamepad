@@ -1,0 +1,145 @@
+<UserControl x:Class="Phone2Gamepad.Windows.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style x:Key="RowTitle" TargetType="TextBlock" BasedOn="{StaticResource Body}"/>
+        <Style x:Key="RowDesc" TargetType="TextBlock" BasedOn="{StaticResource Caption}"><Setter Property="Margin" Value="0,2,0,0"/></Style>
+        <Style x:Key="RowIcon" TargetType="TextBlock" BasedOn="{StaticResource Glyph}"><Setter Property="FontSize" Value="18"/><Setter Property="Width" Value="24"/><Setter Property="Margin" Value="0,0,16,0"/></Style>
+        <Style x:Key="Group" TargetType="TextBlock" BasedOn="{StaticResource BodyStrong}"><Setter Property="Margin" Value="0,20,0,8"/></Style>
+    </UserControl.Resources>
+    <ScrollViewer Style="{StaticResource PageScroller}">
+        <StackPanel MaxWidth="900" HorizontalAlignment="Stretch">
+            <TextBlock Text="Settings" Style="{StaticResource PageTitle}"/>
+
+            <!-- ======================== startup -->
+            <TextBlock Text="Startup and background" Style="{StaticResource Group}" Margin="0,8,0,8"/>
+            <Border Style="{StaticResource SettingRow}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="&#xE768;" Style="{StaticResource RowIcon}"/>
+                    <CheckBox DockPanel.Dock="Right" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding StartServerOnLaunch}" AutomationProperties.Name="Start the server when the app opens"/>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="Start the server when the app opens" Style="{StaticResource RowTitle}"/>
+                        <TextBlock Text="Your phone can connect as soon as Phone2Gamepad is running." Style="{StaticResource RowDesc}"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <Border Style="{StaticResource SettingRow}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="&#xE73F;" Style="{StaticResource RowIcon}"/>
+                    <CheckBox DockPanel.Dock="Right" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding MinimizeToTrayOnClose}" AutomationProperties.Name="Keep running in the system tray when closed"/>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="Keep running in the system tray when closed" Style="{StaticResource RowTitle}"/>
+                        <TextBlock Text="Off: closing the window exits the app and unplugs the virtual controller." Style="{StaticResource RowDesc}"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <Border Style="{StaticResource SettingRow}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="&#xE7E8;" Style="{StaticResource RowIcon}"/>
+                    <CheckBox DockPanel.Dock="Right" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding StartWithWindows}" AutomationProperties.Name="Start with Windows"/>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="Start with Windows" Style="{StaticResource RowTitle}"/>
+                        <TextBlock Text="Starts minimized in the tray when you sign in. You'll be asked to confirm." Style="{StaticResource RowDesc}"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <Border Style="{StaticResource SettingRow}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="&#xEA8F;" Style="{StaticResource RowIcon}"/>
+                    <CheckBox DockPanel.Dock="Right" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding NotifyOnPhoneConnect}" AutomationProperties.Name="Notify when a phone connects or disconnects"/>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="Notify when a phone connects or disconnects" Style="{StaticResource RowTitle}"/>
+                        <TextBlock Text="Shown only while the Phone2Gamepad window isn't in front." Style="{StaticResource RowDesc}"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <!-- ======================== appearance -->
+            <TextBlock Text="Appearance" Style="{StaticResource Group}"/>
+            <Border Style="{StaticResource SettingRow}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="&#xE790;" Style="{StaticResource RowIcon}"/>
+                    <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding ThemeOptions}" SelectedItem="{Binding Theme}" MinWidth="140" VerticalAlignment="Center" AutomationProperties.Name="App theme"/>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="App theme" Style="{StaticResource RowTitle}"/>
+                        <TextBlock Text="System follows your Windows setting. High contrast is always respected." Style="{StaticResource RowDesc}"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <!-- ======================== network -->
+            <TextBlock Text="Network" Style="{StaticResource Group}"/>
+            <Border Style="{StaticResource InfoBarWarning}" Visibility="{Binding RestartNeeded, Converter={StaticResource BoolVis}}" AutomationProperties.LiveSetting="Polite">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Restart server" Command="{Binding RestartServerCommand}" Margin="12,0,0,0"/>
+                    <TextBlock Text="&#xE7BA;" Style="{StaticResource Glyph}" Foreground="{DynamicResource Warning}" Margin="0,0,10,0"/>
+                    <TextBlock Text="Restart the server to use the new network settings. A connected phone will reconnect." Style="{StaticResource Body}" VerticalAlignment="Center"/>
+                </DockPanel>
+            </Border>
+            <Border Style="{StaticResource SettingRow}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="&#xE7F8;" Style="{StaticResource RowIcon}"/>
+                    <TextBox DockPanel.Dock="Right" Text="{Binding ServerName, UpdateSourceTrigger=LostFocus}" Width="220" MaxLength="63" VerticalAlignment="Center" AutomationProperties.Name="PC name shown to phones"/>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="PC name shown to phones" Style="{StaticResource RowTitle}"/>
+                        <TextBlock Text="Appears in the phone's list of computers." Style="{StaticResource RowDesc}"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <Border Style="{StaticResource SettingRow}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="&#xE968;" Style="{StaticResource RowIcon}" VerticalAlignment="Top" Margin="0,2,16,0"/>
+                    <StackPanel>
+                        <TextBlock Text="Ports" Style="{StaticResource RowTitle}"/>
+                        <TextBlock Text="Only change these if another program already uses them. Phones look for the discovery port 47820; with another discovery port, connect from the phone by IP address." Style="{StaticResource RowDesc}"/>
+                        <WrapPanel Margin="0,10,0,0">
+                            <StackPanel Margin="0,0,16,4"><TextBlock Text="Pairing (TCP)" Style="{StaticResource Caption}"/><TextBox Text="{Binding ControlPortText, UpdateSourceTrigger=LostFocus}" Width="120" MaxLength="5" AutomationProperties.Name="Pairing port, TCP"/></StackPanel>
+                            <StackPanel Margin="0,0,16,4"><TextBlock Text="Input (UDP)" Style="{StaticResource Caption}"/><TextBox Text="{Binding InputPortText, UpdateSourceTrigger=LostFocus}" Width="120" MaxLength="5" AutomationProperties.Name="Input port, UDP"/></StackPanel>
+                            <StackPanel Margin="0,0,16,4"><TextBlock Text="Discovery (UDP)" Style="{StaticResource Caption}"/><TextBox Text="{Binding DiscoveryPortText, UpdateSourceTrigger=LostFocus}" Width="120" MaxLength="5" AutomationProperties.Name="Discovery port, UDP"/></StackPanel>
+                        </WrapPanel>
+                        <TextBlock Text="{Binding PortsMessage}" Style="{StaticResource Caption}" Foreground="{DynamicResource Critical}" Margin="0,4,0,0"
+                                   Visibility="{Binding HasPortsMessage, Converter={StaticResource BoolVis}}" AutomationProperties.LiveSetting="Assertive"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <Border Style="{StaticResource SettingRow}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="&#xE83D;" Style="{StaticResource RowIcon}" VerticalAlignment="Top" Margin="0,2,16,0"/>
+                    <StackPanel>
+                        <TextBlock Text="Firewall and privacy" Style="{StaticResource RowTitle}"/>
+                        <TextBlock Style="{StaticResource RowDesc}" Text="Phone2Gamepad only accepts phones on your local network and never changes firewall rules. If your phone can't find this PC, allow Phone2Gamepad for Private networks in Windows Security › Firewall &amp; network protection."/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <!-- ======================== diagnostics -->
+            <TextBlock Text="Troubleshooting" Style="{StaticResource Group}"/>
+            <Border Style="{StaticResource SettingRow}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="&#xE9D9;" Style="{StaticResource RowIcon}"/>
+                    <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding LogLevels}" SelectedItem="{Binding LogLevel}" MinWidth="140" VerticalAlignment="Center" AutomationProperties.Name="Log detail"/>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="Log detail" Style="{StaticResource RowTitle}"/>
+                        <TextBlock Text="Debug records more for troubleshooting. PINs and keys are never logged." Style="{StaticResource RowDesc}"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <!-- ======================== about -->
+            <TextBlock Text="About" Style="{StaticResource Group}"/>
+            <Border Style="{StaticResource SettingRow}">
+                <DockPanel>
+                    <Border DockPanel.Dock="Left" Width="32" Height="32" CornerRadius="6" Background="{DynamicResource Accent}" Margin="0,0,12,0" VerticalAlignment="Top">
+                        <TextBlock Text="&#xE7FC;" Style="{StaticResource Glyph}" HorizontalAlignment="Center" Foreground="{DynamicResource OnAccent}"/>
+                    </Border>
+                    <Button DockPanel.Dock="Right" Content="Open data folder" Command="{Binding OpenDataFolderCommand}" VerticalAlignment="Top"/>
+                    <StackPanel Margin="0,0,16,0">
+                        <TextBlock Style="{StaticResource RowTitle}"><Run Text="Phone2Gamepad "/><Run Text="{Binding Version, Mode=OneWay}"/></TextBlock>
+                        <TextBlock Text="Protocol v1 · Works only on your local network. No accounts, no cloud, no telemetry." Style="{StaticResource RowDesc}"/>
+                        <TextBlock Text="Not available yet: QR pairing, USB connection, vibration feedback, more than one phone at a time." Style="{StaticResource RowDesc}" Margin="0,6,0,0"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

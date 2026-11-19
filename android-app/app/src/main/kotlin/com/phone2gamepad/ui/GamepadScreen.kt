@@ -24,6 +24,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -102,7 +109,6 @@ fun GamepadScreen(vm: AppViewModel) {
     val pad = remember { PadState() }
     var redraw by remember { mutableIntStateOf(0) }
     var generation by remember { mutableIntStateOf(0) }
-    var overlayVisible by remember { mutableStateOf(settings.showOverlay) }
     var menuOpen by remember { mutableStateOf(false) }
     var appearanceOpen by remember { mutableStateOf(false) }
     val bgImage = rememberBackgroundImage(vm, profile.background)
@@ -237,57 +243,69 @@ fun GamepadScreen(vm: AppViewModel) {
             }
         }
 
-        // Status overlay (real values or "---").
+        // HUD: a compact status pill (tap for link details) and a menu button. Both sit on the top edge, away from the
+        // controls; leaving and editing live behind the menu (two deliberate taps) so they cannot be hit mid-game.
         val ctx = view.context
         val transport = remember(conn) { transportLabel(ctx) }
-        Row(
-            Modifier.align(Alignment.TopCenter).fillMaxWidth(0.66f).padding(top = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            if (overlayVisible) {
-                Box(
-                    Modifier.weight(1f).background(Palette.Surface.copy(alpha = 0.85f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 5.dp),
+        val summary = ConnText.summarize(conn, metrics)
+        var details by remember { mutableStateOf(false) }
+        LaunchedEffect(details) { if (details) { kotlinx.coroutines.delay(5000); details = false } }
+        fun releaseForOverlay() { pad.reset(); redraw++; vm.connection.input.releaseAll() }
+        if (settings.showOverlay || !connected) {
+            Column(Modifier.align(Alignment.TopCenter).padding(top = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(
+                    Modifier.clip(CircleShape).background(Palette.Bg.copy(alpha = 0.78f))
+                        .clickable(onClickLabel = "Show connection details") { details = !details }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    StatusDot(summary.tone)
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        statusText(conn, metrics, transport), color = if (connected) Palette.Text else Palette.Warn,
-                        fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 13.sp,
+                        if (connected) (summary.detail ?: summary.label) else summary.label,
+                        color = Palette.Text, fontSize = 12.sp, maxLines = 1,
                     )
                 }
-            } else {
-                Spacer(Modifier.weight(1f))
-            }
-            TextButton(onClick = { overlayVisible = !overlayVisible }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                Text(if (overlayVisible) "Hide" else "Info", fontSize = 12.sp)
-            }
-            // Layout/skin entries live behind a menu (two deliberate taps) at the top, away from the controls, so they
-            // cannot be hit by accident while playing. Opening an editor releases every control first.
-            Box {
-                TextButton(onClick = { menuOpen = true }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                    Text("Menu", fontSize = 12.sp)
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(text = { Text("Edit layout") }, onClick = {
-                        menuOpen = false
-                        pad.reset(); redraw++
-                        vm.openLayoutEditorFromGamepad()
-                    })
-                    DropdownMenuItem(text = { Text("Controller & background") }, onClick = {
-                        menuOpen = false
-                        pad.reset(); redraw++
-                        vm.connection.input.releaseAll()
-                        appearanceOpen = true
-                    })
-                    DropdownMenuItem(text = { Text("Skins") }, onClick = {
-                        menuOpen = false
-                        pad.reset(); redraw++
-                        vm.connection.input.releaseAll()
-                        vm.openSkins(profile.id)
-                    })
+                if (details || !connected) {
+                    Text(
+                        if (connected) ConnText.linkDetails(metrics, transport) else "${(conn as? ConnState.Reconnecting)?.target?.name ?: vm.lastPc?.name ?: "PC"} · ${summary.detail ?: "controls are released until the link is back"}",
+                        color = Palette.TextDim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(8.dp)).background(Palette.Bg.copy(alpha = 0.94f)).padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
                 }
             }
-            TextButton(onClick = { vm.back() }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                Text("Exit", fontSize = 12.sp, color = Palette.Danger)
+        }
+        Box(Modifier.align(Alignment.TopEnd).padding(top = 2.dp, end = 4.dp)) {
+            IconButton(
+                onClick = { menuOpen = true },
+                modifier = Modifier.clip(CircleShape).background(Palette.Bg.copy(alpha = 0.6f)),
+            ) { Icon(P2GIcons.Menu, contentDescription = "Controller menu", tint = Palette.Text) }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Edit layout") }, leadingIcon = { Icon(P2GIcons.Layout, null) },
+                    onClick = { menuOpen = false; releaseForOverlay(); vm.openLayoutEditorFromGamepad() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Controller type & art") }, leadingIcon = { Icon(P2GIcons.Gamepad, null) },
+                    onClick = { menuOpen = false; releaseForOverlay(); appearanceOpen = true },
+                )
+                DropdownMenuItem(
+                    text = { Text("Skins") }, leadingIcon = { Icon(P2GIcons.Palette, null) },
+                    onClick = { menuOpen = false; releaseForOverlay(); vm.openSkins(profile.id) },
+                )
+                DropdownMenuItem(
+                    text = { Text("Tuning") }, leadingIcon = { Icon(P2GIcons.Tune, null) },
+                    onClick = { menuOpen = false; releaseForOverlay(); vm.openTuning(profile.id) },
+                )
+                DropdownMenuItem(
+                    text = { Text(if (settings.showOverlay) "Hide status" else "Show status") }, leadingIcon = { Icon(P2GIcons.Info, null) },
+                    onClick = { menuOpen = false; vm.updateSettings(settings.copy(showOverlay = !settings.showOverlay)) },
+                )
+                HorizontalDivider(color = Palette.OutlineSoft)
+                DropdownMenuItem(
+                    text = { Text("Exit to home") }, leadingIcon = { Icon(P2GIcons.Close, null) },
+                    onClick = { menuOpen = false; releaseForOverlay(); vm.back() },
+                )
             }
         }
     }
@@ -302,19 +320,4 @@ fun GamepadScreen(vm: AppViewModel) {
             onClose = { appearanceOpen = false },
         )
     }
-}
-
-private fun statusText(conn: ConnState, m: com.phone2gamepad.net.Metrics, transport: String): String = when (conn) {
-    is ConnState.Connected -> {
-        val rtt = m.rttMs?.let { "$it ms" } ?: "---"
-        val rate = m.sendRateHz?.let { "$it pkt/s" } ?: "---"
-        val age = m.lastPeerPacketAgeMs?.let { "$it ms ago" } ?: "---"
-        "${conn.target.name} · $transport · RTT $rtt · $rate · PC seen $age"
-    }
-    is ConnState.Reconnecting -> "Disconnected from ${conn.target.name} · reconnecting (attempt ${conn.attempt}) · ${conn.reason}"
-    is ConnState.Connecting -> "Connecting to ${conn.target.name}…"
-    is ConnState.Idle -> "Not connected"
-    is ConnState.Pairing -> "Pairing…"
-    is ConnState.NeedsPairing -> "Pairing required"
-    is ConnState.Failed -> "Failed: ${conn.message}"
 }

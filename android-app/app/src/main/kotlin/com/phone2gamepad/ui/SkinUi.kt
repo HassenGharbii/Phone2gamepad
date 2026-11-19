@@ -50,6 +50,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.ui.unit.sp
 import com.phone2gamepad.AppViewModel
 import com.phone2gamepad.data.ColorSlot
@@ -135,33 +137,18 @@ fun SkinGalleryScreen(vm: AppViewModel) {
         }
     }
 
-    Page("Skins", onBack = { vm.back() }) {
-        vm.notice?.let { msg ->
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Palette.Surface)) {
-                Row(Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(msg, Modifier.weight(1f), color = Palette.Accent)
-                    TextButton(onClick = { vm.notice = null }) { Text("OK") }
-                }
-            }
-        }
+    Page(
+        "Skins", onBack = { vm.back() },
+        actions = { TextAction("Import", { importLauncher.launch(arrayOf("*/*")) }) },
+        bottomBar = { SecondaryButton("Create your own skin", { vm.duplicateSkin(Skins.CLASSIC_ID, open = true) }, Modifier.fillMaxWidth(), icon = P2GIcons.Add) },
+    ) {
         if (backup) {
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Palette.Surface)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Saved skins could not be read", color = Palette.Warn, style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "The custom skin file was damaged (or written by a newer version), so only the built-in skins are shown. The unreadable data was kept aside.",
-                        color = Palette.TextDim,
-                    )
-                    TextButton(onClick = { vm.dismissSkinBackupNotice() }) { Text("Dismiss") }
-                }
-            }
+            Notice(
+                "The custom skin file was damaged (or written by a newer version), so only the built-in skins are shown. The unreadable data was kept aside.",
+                Tone.Warn, title = "Saved skins could not be read", actionLabel = "Dismiss", onAction = { vm.dismissSkinBackupNotice() },
+            )
         }
-        Text("Choose the look of profile \"${profile.name}\". Skins only change colours and shapes; they never change how the controls behave.", color = Palette.TextDim)
-        Text("Online catalog: not available yet. For now, skins are shared as .p2gskin files that you import yourself.", color = Palette.Warn, style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { vm.duplicateSkin(Skins.CLASSIC_ID, open = true) }, Modifier.weight(1f)) { Text("New skin") }
-            OutlinedButton(onClick = { importLauncher.launch(arrayOf("*/*")) }, Modifier.weight(1f)) { Text("Import…") }
-        }
+        Text("Tap a skin to use it on \"${profile.name}\". Skins change colours and shapes only, never how controls behave.", color = Palette.TextDim, style = MaterialTheme.typography.bodyMedium)
         for (pair in library.all.chunked(2)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 for (s in pair) {
@@ -177,6 +164,10 @@ fun SkinGalleryScreen(vm: AppViewModel) {
                 if (pair.size == 1) Spacer(Modifier.weight(1f))
             }
         }
+        Text(
+            "Share skins as .p2gskin files with Export and Import. There is no online catalog yet.",
+            color = Palette.TextDim, style = MaterialTheme.typography.bodySmall,
+        )
     }
 
     deleting?.let { s ->
@@ -195,29 +186,24 @@ private fun SkinCard(
     onUse: () -> Unit, onEdit: () -> Unit, onDuplicate: () -> Unit, onExport: () -> Unit, onDelete: () -> Unit,
 ) {
     var menu by remember(skin.id) { mutableStateOf(false) }
-    Card(
-        modifier, colors = CardDefaults.cardColors(containerColor = Palette.Surface),
-        border = if (applied) BorderStroke(2.dp, Palette.Accent) else null,
-    ) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            SkinPreview(skin, Modifier.fillMaxWidth())
-            Text(skin.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                if (bundled) skin.description else skin.description.ifEmpty { "Custom skin" } + if (skin.author.isNotEmpty()) " · ${skin.author}" else "",
-                color = Palette.TextDim, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.height(54.dp),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (applied) Text("In use", color = Palette.Accent, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                else Button(onClick = onUse, Modifier.weight(1f)) { Text("Use") }
-                Box {
-                    OutlinedButton(onClick = { menu = true }) { Text("More") }
-                    DropdownMenu(menu, { menu = false }) {
-                        if (!bundled) DropdownMenuItem(text = { Text("Edit") }, onClick = { menu = false; onEdit() })
-                        DropdownMenuItem(text = { Text(if (bundled) "Customize a copy" else "Duplicate") }, onClick = { menu = false; onDuplicate() })
-                        DropdownMenuItem(text = { Text("Export…") }, onClick = { menu = false; onExport() })
-                        if (!bundled) DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })
-                    }
+    AppCard(modifier, onClick = if (applied) null else onUse, selected = applied, padding = Space.s) {
+        SkinPreview(skin, Modifier.fillMaxWidth())
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(start = Space.xs)) {
+                Text(skin.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    if (applied) "In use" else if (bundled) "Built in" else (skin.author.ifEmpty { "Custom" }),
+                    color = if (applied) Palette.Ok else Palette.TextDim, style = MaterialTheme.typography.bodySmall, maxLines = 1,
+                )
+            }
+            Box {
+                IconButton(onClick = { menu = true }) { Icon(P2GIcons.MoreVert, contentDescription = "More for ${skin.name}") }
+                DropdownMenu(menu, { menu = false }) {
+                    if (!applied) DropdownMenuItem(text = { Text("Use") }, onClick = { menu = false; onUse() })
+                    if (!bundled) DropdownMenuItem(text = { Text("Edit") }, onClick = { menu = false; onEdit() })
+                    DropdownMenuItem(text = { Text(if (bundled) "Customize a copy" else "Duplicate") }, onClick = { menu = false; onDuplicate() })
+                    DropdownMenuItem(text = { Text("Export to file") }, onClick = { menu = false; onExport() })
+                    if (!bundled) DropdownMenuItem(text = { Text("Delete", color = Palette.Danger) }, onClick = { menu = false; onDelete() })
                 }
             }
         }

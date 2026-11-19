@@ -9,6 +9,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import android.provider.Settings
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import com.phone2gamepad.ui.CustomizeScreen
+import com.phone2gamepad.ui.HomeScreen
+import com.phone2gamepad.ui.Space
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -59,30 +75,57 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun Root(vm: AppViewModel, finish: () -> Unit) {
     val conn by vm.connection.state.collectAsState()
+    val ctx = LocalContext.current
+    if (!vm.ready) return // settings not read yet: keep the plain background for a frame instead of flashing onboarding
 
     BackHandler { if (!vm.back()) finish() }
 
-    // Connection flow drives navigation: connected -> gamepad; pairing needed/failed while playing -> connect screen.
+    // The connection drives a few transitions; everything else is user navigation.
     LaunchedEffect(conn, vm.screen) {
         when {
-            vm.screen == Screen.Connect && conn is ConnState.Connected -> vm.replace(Screen.Gamepad)
-            vm.screen == Screen.Gamepad && (conn is ConnState.NeedsPairing || conn is ConnState.Failed || conn is ConnState.Pairing) ->
-                vm.replace(Screen.Connect)
+            // Pairing finished / already paired: onboarding is over, land on Home (or the pad if Play was tapped).
+            vm.screen == Screen.Connect && conn is ConnState.Connected -> {
+                vm.goHome()
+                if (vm.playPending) { vm.playPending = false; vm.navigate(Screen.Gamepad) }
+            }
+            vm.screen == Screen.Home && conn is ConnState.Connected && vm.playPending -> {
+                vm.playPending = false
+                vm.navigate(Screen.Gamepad)
+            }
+            // The PC wants a PIN (first time, or the pairing was revoked): show the pair screen.
+            (vm.screen == Screen.Home || vm.screen == Screen.Gamepad) && conn is ConnState.NeedsPairing -> vm.navigate(Screen.Connect)
+            vm.screen == Screen.Home && conn is ConnState.Failed -> vm.playPending = false
+            vm.screen == Screen.Gamepad && conn is ConnState.Failed -> vm.goHome()
         }
     }
 
-    when (vm.screen) {
-        Screen.Welcome -> WelcomeScreen(vm)
-        Screen.Discover -> DiscoverScreen(vm)
-        Screen.Manual -> ManualScreen(vm)
-        Screen.Connect -> ConnectScreen(vm)
-        Screen.Gamepad -> GamepadScreen(vm)
-        Screen.Settings -> SettingsScreen(vm)
-        Screen.Profiles -> ProfilesScreen(vm)
-        Screen.Tuning -> TuningScreen(vm)
-        Screen.LayoutEditor -> LayoutEditorScreen(vm)
-        Screen.Skins -> SkinGalleryScreen(vm)
-        Screen.SkinEditor -> SkinEditorScreen(vm)
-        Screen.About -> AboutScreen(vm)
+    // Short cross-fade between screens; none when the user turned animations off in the system settings.
+    val animScale = remember { Settings.Global.getFloat(ctx.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) }
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(vm.notice) {
+        val msg = vm.notice ?: return@LaunchedEffect
+        snackbar.showSnackbar(msg)
+        vm.notice = null
+    }
+    Box(Modifier.fillMaxSize()) {
+        Crossfade(targetState = vm.screen, animationSpec = tween(if (animScale == 0f) 0 else 180), label = "screen") { screen ->
+            when (screen) {
+                Screen.Welcome -> WelcomeScreen(vm)
+                Screen.Discover -> DiscoverScreen(vm)
+                Screen.Manual -> ManualScreen(vm)
+                Screen.Connect -> ConnectScreen(vm)
+                Screen.Home -> HomeScreen(vm)
+                Screen.Gamepad -> GamepadScreen(vm)
+                Screen.Customize -> CustomizeScreen(vm)
+                Screen.Settings -> SettingsScreen(vm)
+                Screen.Profiles -> ProfilesScreen(vm)
+                Screen.Tuning -> TuningScreen(vm)
+                Screen.LayoutEditor -> LayoutEditorScreen(vm)
+                Screen.Skins -> SkinGalleryScreen(vm)
+                Screen.SkinEditor -> SkinEditorScreen(vm)
+                Screen.About -> AboutScreen(vm)
+            }
+        }
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(Space.l))
     }
 }

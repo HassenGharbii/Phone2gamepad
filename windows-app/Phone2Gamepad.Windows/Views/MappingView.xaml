@@ -1,0 +1,153 @@
+<UserControl x:Class="Phone2Gamepad.Windows.Views.MappingView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer Style="{StaticResource PageScroller}">
+        <StackPanel MaxWidth="1000" HorizontalAlignment="Stretch">
+            <TextBlock Text="Mapping" Style="{StaticResource PageTitle}"/>
+            <TextBlock Text="How your phone's controls become Xbox controller input on this PC. Changes apply as you make them."
+                       Style="{StaticResource BodySecondary}" Margin="0,0,0,16"/>
+
+            <!-- profile bar -->
+            <Border Style="{StaticResource Card}" Padding="16,14">
+                <WrapPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,24,8" VerticalAlignment="Center">
+                        <TextBlock Text="Profile" Style="{StaticResource BodyStrong}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                        <ComboBox ItemsSource="{Binding ProfileNames}" SelectedItem="{Binding SelectedProfile}" MinWidth="200" AutomationProperties.Name="Mapping profile"/>
+                        <Button Style="{StaticResource IconButton}" Content="&#xE74D;" Command="{Binding DeleteProfileCommand}" Margin="4,0,0,0"
+                                ToolTip="Delete this profile" AutomationProperties.Name="Delete profile"
+                                Visibility="{Binding IsDefaultProfile, Converter={StaticResource InverseBoolVis}}"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,24,8" VerticalAlignment="Center">
+                        <TextBox Text="{Binding ProfileName, UpdateSourceTrigger=PropertyChanged}" MinWidth="180" MaxLength="40" Margin="0,0,8,0"
+                                 AutomationProperties.Name="New profile name" Tag="New profile name" x:Name="NewName"/>
+                        <Button Content="Save as new profile" Command="{Binding SaveProfileCommand}"/>
+                    </StackPanel>
+                    <Button Content="Restore standard mapping" Style="{StaticResource SubtleButton}" Command="{Binding RestoreDefaultsCommand}" Margin="0,0,0,8"/>
+                </WrapPanel>
+            </Border>
+
+            <!-- validation / status -->
+            <Border AutomationProperties.LiveSetting="Polite">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource InfoBarSuccess}">
+                        <Style.Triggers><DataTrigger Binding="{Binding MappingOk}" Value="False"><Setter Property="Background" Value="{DynamicResource CriticalBg}"/></DataTrigger></Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Margin="0,0,10,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource Glyph}">
+                                <Setter Property="Text" Value="&#xE930;"/><Setter Property="Foreground" Value="{DynamicResource Success}"/>
+                                <Style.Triggers><DataTrigger Binding="{Binding MappingOk}" Value="False"><Setter Property="Text" Value="&#xEA39;"/><Setter Property="Foreground" Value="{DynamicResource Critical}"/></DataTrigger></Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding MappingMessage}" Style="{StaticResource Body}"/>
+                </StackPanel>
+            </Border>
+
+            <!-- buttons -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,12">
+                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Caption}" VerticalAlignment="Center">
+                            <Run Text="{Binding ChangedButtons, Mode=OneWay}"/><Run Text=" changed"/>
+                        </TextBlock>
+                        <TextBlock Text="Buttons" Style="{StaticResource BodyStrong}"/>
+                    </DockPanel>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="36"/><ColumnDefinition Width="*" MaxWidth="320"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="On the phone" Style="{StaticResource Caption}"/>
+                        <TextBlock Grid.Column="2" Text="Sends to Windows" Style="{StaticResource Caption}"/>
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding ButtonMap}" Focusable="False">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,3">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="36"/><ColumnDefinition Width="*" MaxWidth="320"/><ColumnDefinition Width="Auto" MinWidth="120"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding SourceName}" Style="{StaticResource Body}" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="&#xE72A;" Style="{StaticResource Glyph}" FontSize="12" Foreground="{DynamicResource FgTertiary}" HorizontalAlignment="Center"/>
+                                    <ComboBox Grid.Column="2" ItemsSource="{Binding DataContext.ButtonChoices, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                              DisplayMemberPath="Name" SelectedValuePath="Value" SelectedValue="{Binding Target}"
+                                              AutomationProperties.Name="{Binding SourceName, StringFormat=Xbox button sent for {0}}">
+                                        <ComboBox.Style>
+                                            <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+                                                <Style.Triggers><DataTrigger Binding="{Binding IsDuplicate}" Value="True"><Setter Property="BorderBrush" Value="{DynamicResource Critical}"/></DataTrigger></Style.Triggers>
+                                            </Style>
+                                        </ComboBox.Style>
+                                    </ComboBox>
+                                    <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock Text="Used twice" Style="{StaticResource Caption}" Foreground="{DynamicResource Critical}" VerticalAlignment="Center" Margin="0,0,8,0"
+                                                   Visibility="{Binding IsDuplicate, Converter={StaticResource BoolVis}}"/>
+                                        <Button Style="{StaticResource SubtleButton}" Content="Reset" Padding="8,4" MinHeight="28"
+                                                Command="{Binding DataContext.ResetButtonCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}"
+                                                Visibility="{Binding IsChanged, Converter={StaticResource BoolVis}}"
+                                                AutomationProperties.Name="{Binding SourceName, StringFormat=Reset {0}}"/>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- sticks -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="Sticks" Style="{StaticResource BodyStrong}" Margin="0,0,0,4"/>
+                    <TextBlock Text="Dead zone ignores small movements near the centre; sensitivity scales the movement." Style="{StaticResource Caption}" Margin="0,0,0,12"/>
+                    <UniformGrid Columns="2" x:Name="StickGrid">
+                        <StackPanel Margin="0,0,24,0">
+                            <TextBlock Text="Left stick" Style="{StaticResource BodyStrong}" FontSize="13" Margin="0,0,0,8"/>
+                            <DockPanel><TextBlock DockPanel.Dock="Right" Text="{Binding LeftDeadZone, StringFormat={}{0:P0}}" Style="{StaticResource Caption}"/><TextBlock Text="Dead zone" Style="{StaticResource Body}" FontSize="13"/></DockPanel>
+                            <Slider Minimum="0" Maximum="0.9" SmallChange="0.01" LargeChange="0.05" Value="{Binding LeftDeadZone}" AutomationProperties.Name="Left stick dead zone"/>
+                            <DockPanel Margin="0,6,0,0"><TextBlock DockPanel.Dock="Right" Text="{Binding LeftSensitivity, StringFormat={}{0:0.00}×}" Style="{StaticResource Caption}"/><TextBlock Text="Sensitivity" Style="{StaticResource Body}" FontSize="13"/></DockPanel>
+                            <Slider Minimum="0.25" Maximum="4" SmallChange="0.05" LargeChange="0.25" Value="{Binding LeftSensitivity}" AutomationProperties.Name="Left stick sensitivity"/>
+                            <WrapPanel Margin="0,8,0,0">
+                                <CheckBox Content="Invert X" IsChecked="{Binding InvertLeftX}" AutomationProperties.Name="Invert left stick X"/>
+                                <CheckBox Content="Invert Y" IsChecked="{Binding InvertLeftY}" AutomationProperties.Name="Invert left stick Y"/>
+                            </WrapPanel>
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="Right stick" Style="{StaticResource BodyStrong}" FontSize="13" Margin="0,0,0,8"/>
+                            <DockPanel><TextBlock DockPanel.Dock="Right" Text="{Binding RightDeadZone, StringFormat={}{0:P0}}" Style="{StaticResource Caption}"/><TextBlock Text="Dead zone" Style="{StaticResource Body}" FontSize="13"/></DockPanel>
+                            <Slider Minimum="0" Maximum="0.9" SmallChange="0.01" LargeChange="0.05" Value="{Binding RightDeadZone}" AutomationProperties.Name="Right stick dead zone"/>
+                            <DockPanel Margin="0,6,0,0"><TextBlock DockPanel.Dock="Right" Text="{Binding RightSensitivity, StringFormat={}{0:0.00}×}" Style="{StaticResource Caption}"/><TextBlock Text="Sensitivity" Style="{StaticResource Body}" FontSize="13"/></DockPanel>
+                            <Slider Minimum="0.25" Maximum="4" SmallChange="0.05" LargeChange="0.25" Value="{Binding RightSensitivity}" AutomationProperties.Name="Right stick sensitivity"/>
+                            <WrapPanel Margin="0,8,0,0">
+                                <CheckBox Content="Invert X" IsChecked="{Binding InvertRightX}" AutomationProperties.Name="Invert right stick X"/>
+                                <CheckBox Content="Invert Y" IsChecked="{Binding InvertRightY}" AutomationProperties.Name="Invert right stick Y"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- triggers -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="Triggers" Style="{StaticResource BodyStrong}" Margin="0,0,0,4"/>
+                    <TextBlock Text="Calibrate where a trigger counts as released and fully pressed, or make it simply on/off." Style="{StaticResource Caption}" Margin="0,0,0,12"/>
+                    <UniformGrid Columns="2" x:Name="TriggerGrid">
+                        <StackPanel Margin="0,0,24,0">
+                            <DockPanel><TextBlock DockPanel.Dock="Right" Text="{Binding TriggerMin, StringFormat={}{0:0}}" Style="{StaticResource Caption}"/><TextBlock Text="Released at or below" Style="{StaticResource Body}" FontSize="13"/></DockPanel>
+                            <Slider Minimum="0" Maximum="254" SmallChange="1" LargeChange="10" Value="{Binding TriggerMin}" AutomationProperties.Name="Trigger released threshold"/>
+                            <DockPanel Margin="0,6,0,0"><TextBlock DockPanel.Dock="Right" Text="{Binding TriggerMax, StringFormat={}{0:0}}" Style="{StaticResource Caption}"/><TextBlock Text="Fully pressed at or above" Style="{StaticResource Body}" FontSize="13"/></DockPanel>
+                            <Slider Minimum="1" Maximum="255" SmallChange="1" LargeChange="10" Value="{Binding TriggerMax}" AutomationProperties.Name="Trigger fully pressed threshold"/>
+                        </StackPanel>
+                        <StackPanel VerticalAlignment="Center">
+                            <DockPanel Margin="0,0,0,10">
+                                <CheckBox DockPanel.Dock="Right" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding LeftTriggerDigital}" AutomationProperties.Name="Left trigger on/off only"/>
+                                <TextBlock Text="Left trigger on/off only" Style="{StaticResource Body}" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <DockPanel>
+                                <CheckBox DockPanel.Dock="Right" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding RightTriggerDigital}" AutomationProperties.Name="Right trigger on/off only"/>
+                                <TextBlock Text="Right trigger on/off only" Style="{StaticResource Body}" VerticalAlignment="Center"/>
+                            </DockPanel>
+                        </StackPanel>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

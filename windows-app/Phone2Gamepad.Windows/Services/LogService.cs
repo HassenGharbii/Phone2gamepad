@@ -8,6 +8,8 @@ namespace Phone2Gamepad.Windows.Services;
 public sealed record LogEntry(DateTime Time, LogLevel Level, string Category, string Message)
 {
     public string Text => $"{Time:HH:mm:ss.fff} {Level.ToString()[..4].ToUpperInvariant()} {Message}";
+    public string TimeText => Time.ToString("HH:mm:ss");
+    public string LevelText => Level switch { LogLevel.Warning => "Warning", LogLevel.Error or LogLevel.Critical => "Error", LogLevel.Debug or LogLevel.Trace => "Debug", _ => "Info" };
 }
 
 /// <summary>

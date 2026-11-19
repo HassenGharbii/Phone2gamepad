@@ -30,9 +30,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-enum class Screen { Welcome, Discover, Manual, Connect, Gamepad, Settings, Profiles, Tuning, LayoutEditor, Skins, SkinEditor, About }
+enum class Screen { Welcome, Discover, Manual, Connect, Home, Gamepad, Customize, Settings, Profiles, Tuning, LayoutEditor, Skins, SkinEditor, About }
 
-private val GAMEPAD_SUBSCREENS = setOf(Screen.LayoutEditor, Screen.Tuning, Screen.Skins, Screen.SkinEditor, Screen.Profiles)
+/** Screens on which a session to the last PC is kept up (and re-established after the app returns to the foreground). */
+private val SESSION_SCREENS = setOf(
+    Screen.Home, Screen.Gamepad, Screen.Customize, Screen.LayoutEditor, Screen.Tuning, Screen.Skins, Screen.SkinEditor, Screen.Profiles,
+)
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val application get() = getApplication<App>()
@@ -67,13 +70,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     var screen by mutableStateOf(Screen.Welcome)
         private set
+    /** False until the saved settings were read and the first screen (onboarding or Home) was chosen. */
+    var ready by mutableStateOf(false)
+        private set
     private val history = ArrayDeque<Screen>()
 
     val discovered = MutableStateFlow<List<DiscoveredPc>>(emptyList())
     var scanning by mutableStateOf(false)
         private set
+    /** Wall-clock start of the current scan (for "nothing found yet" help timing). */
+    var scanStartedAt by mutableStateOf(0L)
+        private set
     private var scanJob: Job? = null
     private var lastTarget: PcTarget? = null
+
+    /** Set when the user chose to disconnect (or cancelled pairing); Home then does not reconnect on its own. */
+    var userDisconnected by mutableStateOf(false)
+        private set
+    /** Play was tapped while not connected: open the gamepad as soon as the session is up. */
+    var playPending by mutableStateOf(false)
+
+    init {
+        viewModelScope.launch {
+            val s = repo.settings.first()
+            if (s.lastHost.isNotBlank()) lastTarget = PcTarget(s.lastName.ifEmpty { s.lastHost }, s.lastHost, s.lastTcpPort)
+            screen = com.phone2gamepad.ui.Startup.initialScreen(s.lastHost)
+            if (screen == Screen.Discover) startScan()
+            ready = true
+        }
+    }
 
     fun navigate(s: Screen) {
         if (s == screen) return
@@ -85,6 +110,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Replace the current screen without growing the back stack. */
     fun replace(s: Screen) {
         screen = s
+        if (s == Screen.Discover) startScan() else stopScan()
+    }
+
+    /** Go to Home and forget the screens before it (after pairing, or leaving the onboarding). */
+    fun goHome() {
+        history.clear()
+        screen = Screen.Home
         stopScan()
     }
 
@@ -92,23 +124,79 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun back(): Boolean {
         Log.i("P2G", "back() from $screen")
         when (screen) {
-            Screen.Gamepad, Screen.Connect -> connection.disconnect()
+            Screen.Home -> { connection.disconnect(); return false }
+            // Leaving the pad keeps the session so Play is instant; controls are released.
+            Screen.Gamepad -> { connection.input.releaseAll(); playPending = false; goHome(); return true }
+            // Backing out of connect/pair cancels it, and Home must not immediately start it again.
+            Screen.Connect -> { connection.disconnect(); userDisconnected = true; playPending = false }
             else -> {}
         }
-        val leaving = screen
-        val prev = history.removeLastOrNull() ?: return false
-        // The editors/galleries opened from the gamepad return to it (the session stays up); otherwise a stale
-        // Gamepad/Connect entry means "back to discovery".
-        val fromGamepadSubScreen = prev == Screen.Gamepad && leaving in GAMEPAD_SUBSCREENS
-        screen = if (!fromGamepadSubScreen && (prev == Screen.Gamepad || prev == Screen.Connect)) Screen.Discover else prev
+        val prev = history.removeLastOrNull()
+        if (prev == null) {
+            if (screen == Screen.Welcome) return false
+            screen = if (lastTarget != null) Screen.Home else Screen.Welcome
+            stopScan()
+            return true
+        }
+        // A stale Connect entry (e.g. pairing finished) is skipped.
+        screen = if (prev == Screen.Connect) (history.removeLastOrNull() ?: Screen.Home) else prev
         if (screen == Screen.Discover) startScan() else stopScan()
         return true
     }
+
+    val hasPc: Boolean get() = lastTarget != null
+    val lastPc: PcTarget? get() = lastTarget
+
+    /** Home auto-connect (see [com.phone2gamepad.ui.Startup.shouldAutoConnect]). */
+    fun autoConnectIfNeeded() {
+        val t = lastTarget ?: return
+        if (com.phone2gamepad.ui.Startup.shouldAutoConnect(screen, connection.state.value, t.host, userDisconnected)) {
+            connection.connect(t)
+        }
+    }
+
+    /** Explicit connect from Home (clears a previous manual disconnect). */
+    fun reconnect() {
+        val t = lastTarget ?: return
+        userDisconnected = false
+        connection.connect(t)
+    }
+
+    fun disconnectByUser() {
+        userDisconnected = true
+        playPending = false
+        connection.disconnect()
+    }
+
+    /** Play: straight to the pad when connected, otherwise connect first and open it once the session is up. */
+    fun play() {
+        if (connection.state.value is ConnState.Connected) {
+            navigate(Screen.Gamepad)
+        } else {
+            playPending = true
+            if (connection.state.value is ConnState.Idle || connection.state.value is ConnState.Failed) reconnect()
+        }
+    }
+
+    /** "Change PC": drop the session and pick another PC (the stored pairing stays, so going back needs no PIN). */
+    fun changePc() {
+        disconnectByUser()
+        navigate(Screen.Discover)
+    }
+
+    /** Debug builds: show the first-run screens without wiping the pairing. */
+    fun previewOnboarding() {
+        disconnectByUser()
+        navigate(Screen.Welcome)
+    }
+
+    fun openCustomize() = navigate(Screen.Customize)
 
     fun startScan() {
         scanJob?.cancel()
         discovered.value = emptyList()
         scanning = true
+        scanStartedAt = System.currentTimeMillis()
         scanJob = viewModelScope.launch {
             try {
                 DiscoveryClient.scan().collect { discovered.value = it }
@@ -123,8 +211,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         scanning = false
     }
 
+    /** Connect to a PC picked in discovery / manual entry; shows the connect & pair screen. */
     fun connect(target: PcTarget) {
         lastTarget = target
+        userDisconnected = false
         viewModelScope.launch {
             repo.update(settings.value.copy(lastHost = target.host, lastTcpPort = target.tcpPort, lastName = target.name))
         }
@@ -239,16 +329,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { repo.update(s) }
     }
 
-    /** Activity left the foreground while playing: release everything and drop the session. */
+    /** Activity left the foreground: release everything and drop the session (the PC must not keep a live pad). */
     fun onBackgrounded() {
         Log.i("P2G", "onBackgrounded screen=$screen")
         connection.input.releaseAll()
-        if (screen == Screen.Gamepad) connection.disconnect()
+        if (screen in SESSION_SCREENS) connection.disconnect()
     }
 
-    /** Activity is back; silently re-establish the session if the user was on the gamepad. */
+    /** Activity is back: silently re-establish the session if the user was using it. */
     fun onForegrounded() {
-        if (screen == Screen.Gamepad && connection.state.value is ConnState.Idle) {
+        if (screen in SESSION_SCREENS && !userDisconnected && connection.state.value is ConnState.Idle) {
             lastTarget?.let { connection.connect(it) }
         }
     }

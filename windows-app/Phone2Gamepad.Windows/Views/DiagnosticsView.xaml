@@ -1,0 +1,75 @@
+<UserControl x:Class="Phone2Gamepad.Windows.Views.DiagnosticsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="24,4,20,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="Diagnostics" Style="{StaticResource PageTitle}"/>
+            <TextBlock Text="Counters since the server started, and the app's recent activity." Style="{StaticResource BodySecondary}"/>
+        </StackPanel>
+
+        <WrapPanel Grid.Row="1" Margin="0,0,-8,4">
+            <Border Style="{StaticResource Tile}"><StackPanel><TextBlock Text="Packets received" Style="{StaticResource Caption}"/><TextBlock Text="{Binding ReceivedText}" Style="{StaticResource MetricValue}"/></StackPanel></Border>
+            <Border Style="{StaticResource Tile}"><StackPanel><TextBlock Text="Controller updates" Style="{StaticResource Caption}"/><TextBlock Text="{Binding StatePacketsText}" Style="{StaticResource MetricValue}"/></StackPanel></Border>
+            <Border Style="{StaticResource Tile}" ToolTip="Failed validation: wrong session, signature, size or sender."><StackPanel><TextBlock Text="Rejected" Style="{StaticResource Caption}"/><TextBlock Text="{Binding InvalidText}" Style="{StaticResource MetricValue}"/></StackPanel></Border>
+            <Border Style="{StaticResource Tile}" ToolTip="Duplicate or late packets, safely ignored."><StackPanel><TextBlock Text="Dropped" Style="{StaticResource Caption}"/><TextBlock Text="{Binding DroppedText}" Style="{StaticResource MetricValue}"/></StackPanel></Border>
+            <Border Style="{StaticResource Tile}"><StackPanel><TextBlock Text="Packet rate" Style="{StaticResource Caption}"/><TextBlock Text="{Binding RateText}" Style="{StaticResource MetricValue}"/></StackPanel></Border>
+            <Border Style="{StaticResource Tile}"><StackPanel><TextBlock Text="Latency" Style="{StaticResource Caption}"/><TextBlock Text="{Binding LatencyText}" Style="{StaticResource MetricValue}"/></StackPanel></Border>
+        </WrapPanel>
+
+        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0" Margin="0,0,0,12">
+            <DockPanel>
+                <DockPanel DockPanel.Dock="Top" Margin="16,12,12,8">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <ComboBox ItemsSource="{Binding LogFilters}" SelectedItem="{Binding LogFilter}" MinWidth="190" Margin="0,0,8,0" AutomationProperties.Name="Show log entries"/>
+                        <Button Style="{StaticResource IconButton}" Content="&#xE8C8;" Command="{Binding CopyLogCommand}" ToolTip="Copy log" AutomationProperties.Name="Copy log"/>
+                        <Button Style="{StaticResource IconButton}" Content="&#xE838;" Command="{Binding OpenLogFolderCommand}" ToolTip="Open log folder" AutomationProperties.Name="Open log folder"/>
+                    </StackPanel>
+                    <TextBlock Text="Activity" Style="{StaticResource BodyStrong}" VerticalAlignment="Center"/>
+                </DockPanel>
+                <Border DockPanel.Dock="Top" Height="1" Background="{DynamicResource Stroke}"/>
+                <Grid>
+                    <ListBox x:Name="LogList" ItemsSource="{Binding LogView}" Style="{StaticResource PlainList}" ItemContainerStyle="{StaticResource PlainRow}"
+                             Padding="8,4" AutomationProperties.Name="Activity log">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="70"/><ColumnDefinition Width="76"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding TimeText}" FontFamily="{StaticResource MonoFont}" FontSize="12" Foreground="{DynamicResource FgTertiary}" VerticalAlignment="Top" Margin="0,1,0,0"/>
+                                    <Border Grid.Column="1" Style="{StaticResource Pill}" Padding="6,0" HorizontalAlignment="Left" VerticalAlignment="Top" BorderThickness="0"
+                                            Background="{Binding LevelText, Converter={StaticResource ToneBg}}">
+                                        <TextBlock Text="{Binding LevelText}" FontSize="11" Foreground="{Binding LevelText, Converter={StaticResource ToneFg}}"/>
+                                    </Border>
+                                    <TextBlock Grid.Column="2" Text="{Binding Message}" Style="{StaticResource Body}" FontSize="13"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <TextBlock Text="Nothing to show yet." Style="{StaticResource Caption}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Visibility="{Binding HasItems, ElementName=LogList, Converter={StaticResource InverseBoolVis}}"/>
+                </Grid>
+            </DockPanel>
+        </Border>
+
+        <Border Grid.Row="3" Style="{StaticResource Card}" Margin="0">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Command="{Binding ExportDiagnosticsCommand}" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE74E;" Style="{StaticResource Glyph}" FontSize="14" Margin="0,0,8,0"/><TextBlock Text="Export report…"/></StackPanel>
+                </Button>
+                <StackPanel>
+                    <TextBlock Text="Diagnostics report" Style="{StaticResource BodyStrong}"/>
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,6"
+                               Text="A text file with versions, counters and recent activity to share when asking for help. PINs and keys are always removed."/>
+                    <CheckBox IsChecked="{Binding IncludeNetworkDetails}" Content="Include IP addresses and phone names (otherwise they're masked)" Margin="0"/>
+                    <TextBlock Text="{Binding DiagnosticsNotice}" Style="{StaticResource Caption}" Foreground="{DynamicResource Success}" Margin="0,6,0,0"
+                               Visibility="{Binding DiagnosticsNotice, Converter={StaticResource NotEmptyVis}}" AutomationProperties.LiveSetting="Polite"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>

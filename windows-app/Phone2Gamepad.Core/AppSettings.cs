@@ -12,6 +12,8 @@ public sealed class AppSettings
 {
     public const int CurrentSchema = 1;
     public static readonly string[] LogLevels = { "Debug", "Information", "Warning", "Error" };
+    public static readonly string[] Themes = { "System", "Dark", "Light" };
+    public const int MaxPhoneLabelLength = 40;
 
     public int SchemaVersion { get; set; } = CurrentSchema;
     public string ServerName { get; set; } = Environment.MachineName;
@@ -25,6 +27,18 @@ public sealed class AppSettings
     public string ActiveProfile { get; set; } = "Default";
     public List<MappingProfile> Profiles { get; set; } = new();
 
+    // UI preferences (additive in schema 1: missing fields simply take these defaults)
+    public string Theme { get; set; } = "System";
+    public bool NotifyOnPhoneConnect { get; set; } = true;
+    public WindowBounds? Window { get; set; }
+    /// <summary>Local, user-chosen display names for paired phones, keyed by device id. Never sent anywhere.</summary>
+    public Dictionary<string, string> PhoneLabels { get; set; } = new();
+    /// <summary>When each paired phone last started a session on this PC (local only).</summary>
+    public Dictionary<string, DateTimeOffset> PhoneLastSeen { get; set; } = new();
+
+    /// <summary>File this instance was loaded from (and saves back to); null = <see cref="DefaultPath"/>.</summary>
+    [System.Text.Json.Serialization.JsonIgnore] public string? FilePath { get; set; }
+
     public static string Directory_ => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Phone2Gamepad");
     public static string DefaultPath => Path.Combine(Directory_, "settings.json");
 
@@ -34,6 +48,13 @@ public sealed class AppSettings
     public static AppSettings Load(string? path = null, Action<string>? warn = null)
     {
         path ??= DefaultPath;
+        var loaded = LoadCore(path, warn);
+        loaded.FilePath = path == DefaultPath ? null : path;
+        return loaded;
+    }
+
+    private static AppSettings LoadCore(string path, Action<string>? warn)
+    {
         if (!File.Exists(path)) return new AppSettings();
         try
         {
@@ -106,15 +127,32 @@ public sealed class AppSettings
         if (string.IsNullOrWhiteSpace(ServerName) || ServerName.Length > 63) ServerName = Environment.MachineName;
         if (!LogLevels.Contains(LogLevel)) LogLevel = "Information";
         if (ActiveProfile != "Default" && Profiles.All(p => p.Name != ActiveProfile)) ActiveProfile = "Default";
+        if (!Themes.Contains(Theme)) Theme = "System";
+        PhoneLabels = (PhoneLabels ?? new())
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
+            .Take(64)
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Trim().Length > MaxPhoneLabelLength ? kv.Value.Trim()[..MaxPhoneLabelLength] : kv.Value.Trim());
+        PhoneLastSeen = (PhoneLastSeen ?? new()).Where(kv => !string.IsNullOrWhiteSpace(kv.Key)).Take(64).ToDictionary(kv => kv.Key, kv => kv.Value);
+        if (Window is { } w && !(double.IsFinite(w.Left) && double.IsFinite(w.Top) && w.Width is > 0 and < 100000 && w.Height is > 0 and < 100000)) Window = null;
         return this;
     }
 
     public void Save(string? path = null)
     {
-        path ??= DefaultPath;
+        path ??= FilePath ?? DefaultPath;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var tmp = path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(this, Json));
         File.Move(tmp, path, overwrite: true);
     }
+}
+
+/// <summary>Restore bounds of the main window in device-independent pixels.</summary>
+public sealed class WindowBounds
+{
+    public double Left { get; set; }
+    public double Top { get; set; }
+    public double Width { get; set; }
+    public double Height { get; set; }
+    public bool Maximized { get; set; }
 }

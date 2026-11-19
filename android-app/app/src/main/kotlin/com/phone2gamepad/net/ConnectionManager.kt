@@ -34,7 +34,7 @@ data class PcTarget(val name: String, val host: String, val tcpPort: Int = Wire.
 sealed class ConnState {
     data object Idle : ConnState()
     data class Connecting(val target: PcTarget) : ConnState()
-    data class NeedsPairing(val target: PcTarget, val pairingOpen: Boolean, val error: String? = null) : ConnState()
+    data class NeedsPairing(val target: PcTarget, val pairingOpen: Boolean, val error: String? = null, val errorCode: String? = null) : ConnState()
     data class Pairing(val target: PcTarget) : ConnState()
     data class Connected(val target: PcTarget, val sessionId: Long) : ConnState()
     data class Reconnecting(val target: PcTarget, val attempt: Int, val retryInMs: Long, val reason: String) : ConnState()
@@ -86,11 +86,13 @@ class ConnectionManager(
     private var job: Job? = null
     private val pins = Channel<String>(Channel.CONFLATED)
     @Volatile private var pairError: String? = null
+    @Volatile private var pairErrorCode: String? = null
 
     fun connect(target: PcTarget) {
         job?.cancel()
         input.releaseAll()
         pairError = null
+        pairErrorCode = null
         job = scope.launch(Dispatchers.IO) { runLoop(target) }
     }
 
@@ -177,6 +179,7 @@ class ConnectionManager(
                     // PC no longer knows this device (revoked) or the secret is stale.
                     resolver.rejected()
                     pairError = "This PC no longer trusts this phone. Pair again."
+                    pairErrorCode = "revoked"
                     throw SessionEnded("Pairing was revoked on the PC")
                 }
                 throw e
@@ -216,15 +219,17 @@ class ConnectionManager(
 
     private suspend fun pairUntilSuccess(target: PcTarget, ctrl: ControlChannel, hello: HelloInfo, resolver: PcSecretResolver): ByteArray {
         while (true) {
-            _state.value = ConnState.NeedsPairing(target, hello.pairingOpen, pairError)
+            _state.value = ConnState.NeedsPairing(target, hello.pairingOpen, pairError, pairErrorCode)
             val pin = pins.receive()
             _state.value = ConnState.Pairing(target)
             try {
                 val secret = ctrl.pair(pin)
                 resolver.saveNew(secret)
                 pairError = null
+                pairErrorCode = null
                 return secret
             } catch (e: ProtocolException) {
+                pairErrorCode = e.code
                 pairError = when (e.code) {
                     "bad_pin" -> "Wrong PIN. Check the code shown on the PC."
                     "rejected_by_user" -> "Pairing was declined on the PC."

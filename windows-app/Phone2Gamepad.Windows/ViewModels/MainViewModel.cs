@@ -1,35 +1,34 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
-using System.Net;
-using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Extensions.Logging;
 using Phone2Gamepad.Core;
+using Phone2Gamepad.Core.Presentation;
 using Phone2Gamepad.Network;
 using Phone2Gamepad.VirtualGamepad;
 using Phone2Gamepad.Windows.Services;
 
 namespace Phone2Gamepad.Windows.ViewModels;
 
-public sealed record PairedRow(string DeviceId, string Name, string PairedAt);
+public sealed record NavItem(string Glyph, string Title, string Shortcut);
 
-public sealed class ButtonMapRow(MainViewModel owner, GamepadButtons source) : ObservableObject
+/// <summary>A styled yes/no question (replaces MessageBox). Destructive questions get a red primary button.</summary>
+public sealed record DialogRequest(string Title, string Message, string PrimaryText, string SecondaryText = "Cancel", bool Destructive = false);
+
+public sealed class AddressChip(string address, string adapter, bool primary)
 {
-    private GamepadButtons _target = source;
-    public GamepadButtons Source { get; } = source;
-    public string SourceName => Source.ToString();
-    public GamepadButtons Target { get => _target; set { if (Set(ref _target, value)) owner.ApplyMapping(); } }
+    public string Address { get; } = address;
+    public string Adapter { get; } = adapter;
+    public bool IsPrimary { get; } = primary;
 }
 
-public sealed class MainViewModel : ObservableObject, IDisposable
+/// <summary>Shell view model: navigation, server control, home status, pairing, live controller and phones. See the partial files for mapping/settings/diagnostics.</summary>
+public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
-    public static readonly GamepadButtons[] AllButtons =
-    {
-        GamepadButtons.A, GamepadButtons.B, GamepadButtons.X, GamepadButtons.Y, GamepadButtons.LeftBumper, GamepadButtons.RightBumper,
-        GamepadButtons.Back, GamepadButtons.Start, GamepadButtons.LeftStick, GamepadButtons.RightStick, GamepadButtons.Guide,
-    };
+    public const string DriverReleasesUrl = "https://github.com/nefarius/ViGEmBus/releases";
 
     private readonly ServerHost _host;
     private readonly AppSettings _settings;
@@ -39,279 +38,412 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _visual = new() { Interval = TimeSpan.FromMilliseconds(33) };
     private GamepadState _latestMapped;
     private string? _error;
-    private bool _loadingProfile;
+    private bool _everConnected;
 
-    /// <summary>Set by the shell: asks the user (modal) whether a pairing request may proceed.</summary>
-    public Func<PairingRequestInfo, Task<bool>>? AskPairing { get; set; }
-    /// <summary>Set by the shell: yes/no question used before enabling start-with-Windows.</summary>
-    public Func<string, string, bool>? Confirm { get; set; }
+    /// <summary>Set by the shell: asks the user whether a phone (PIN already verified) may pair. Cancelled if the phone gives up.</summary>
+    public Func<PairingRequestInfo, CancellationToken, Task<bool>>? AskPairing { get; set; }
+    /// <summary>Set by the shell: styled yes/no dialog.</summary>
+    public Func<DialogRequest, bool>? Confirm { get; set; }
     public event Action? ServerRunningChanged;
+    public event Action? StatusChanged;
+    public event Action<string>? PhoneConnected;
+    public event Action<string, string>? PhoneDisconnected;
 
     public MainViewModel(ServerHost host, AppSettings settings, LogService log, ILogger logger)
     {
         _host = host; _settings = settings; _log = log; _logger = logger;
-        _host.ConfirmPairing = (req, _) => Application.Current.Dispatcher.InvokeAsync(() => AskPairing?.Invoke(req) ?? Task.FromResult(false)).Task.Unwrap();
+        _everConnected = settings.PhoneLastSeen.Count > 0;
+        _host.ConfirmPairing = (req, ct) => Application.Current.Dispatcher.InvokeAsync(() => AskPairing?.Invoke(req, ct) ?? Task.FromResult(false)).Task.Unwrap();
         _host.Sessions.StateApplied += (_, mapped) => _latestMapped = mapped;
-        _host.Sessions.SessionEnded += _ => _latestMapped = default;
+        _host.Sessions.SessionStarted += s => Ui(() => OnSessionStarted(s));
+        _host.Sessions.SessionEnded += e => { _latestMapped = default; Ui(() => OnSessionEnded(e)); };
         _host.Sessions.InputStale += () => _latestMapped = default;
-        _host.Devices.Changed += () => Application.Current.Dispatcher.BeginInvoke(ReloadDevices);
-        _host.RunningChanged += () => Application.Current.Dispatcher.BeginInvoke(() => { OnPropertyChanged(string.Empty); ServerRunningChanged?.Invoke(); });
+        _host.Devices.Changed += () => Ui(ReloadDevices);
+        _host.Pairing.Changed += () => Ui(RefreshLive);
+        _host.RunningChanged += () => Ui(() => { RefreshAll(); ServerRunningChanged?.Invoke(); });
 
+        NavigateCommand = new RelayCommand(p => { if (p is string s && int.TryParse(s, out var i)) SelectedPage = i; });
         ToggleServerCommand = new RelayCommand(ToggleServer);
-        OpenPairingCommand = new RelayCommand(() => { _host.Pairing.Open(); _logger.LogInformation("Pairing window opened (120 s)"); }, () => _host.IsRunning);
+        RestartServerCommand = new RelayCommand(RestartServer, () => _host.IsRunning);
+        OpenPairingCommand = new RelayCommand(OpenPairing, () => _host.IsRunning);
         ClosePairingCommand = new RelayCommand(() => _host.Pairing.Close(), () => _host.Pairing.IsOpen);
-        RevokeCommand = new RelayCommand(p => { if (p is PairedRow r) _host.Revoke(r.DeviceId); });
-        RetryDriverCommand = new RelayCommand(() => { _host.Gamepad.Connect(); OnPropertyChanged(string.Empty); });
-        ExportDiagnosticsCommand = new RelayCommand(ExportDiagnostics);
-        SaveProfileCommand = new RelayCommand(SaveProfile);
-        DeleteProfileCommand = new RelayCommand(DeleteProfile, () => SelectedProfile != "Default");
-        RestoreDefaultsCommand = new RelayCommand(() => { LoadProfile(MappingProfile.CreateDefault()); SelectedProfile = "Default"; });
+        StatusActionCommand = new RelayCommand(RunStatusAction);
+        RetryDriverCommand = new RelayCommand(() => { _host.Gamepad.Connect(); RefreshAll(); });
+        OpenDriverHelpCommand = new RelayCommand(() => OpenUrl(DriverReleasesUrl));
+        OpenJoyCplCommand = new RelayCommand(() => Shell("joy.cpl"));
+        CopyCommand = new RelayCommand(p => { if (p is string s && s.Length > 0) CopyText(s); });
+        DismissErrorCommand = new RelayCommand(() => Error = null);
 
-        foreach (var b in AllButtons) ButtonMap.Add(new ButtonMapRow(this, b));
-        ProfileNames.Add("Default");
-        foreach (var p in _settings.Profiles) ProfileNames.Add(p.Name);
-        _selectedProfile = ProfileNames.Contains(_settings.ActiveProfile) ? _settings.ActiveProfile : "Default";
-        LoadProfile(FindProfile(_selectedProfile));
+        InitMapping();
+        InitDiagnostics();
         ReloadDevices();
+        ReloadAddresses();
 
-        _refresh.Tick += (_, _) => OnPropertyChanged(string.Empty);
-        _visual.Tick += (_, _) => LiveState = _host.Sessions.Current == null ? default : _latestMapped;
+        _refresh.Tick += (_, _) => RefreshLive();
+        _visual.Tick += (_, _) => { IsLive = _host.Sessions.Current != null; LiveState = IsLive ? _latestMapped : default; };
         _refresh.Start(); _visual.Start();
     }
 
-    // ------------------------------------------------------------------ commands
+    private static void Ui(Action a) => Application.Current?.Dispatcher.BeginInvoke(a);
+
+    // ================================================================== navigation
+    public IReadOnlyList<NavItem> Pages { get; } = new NavItem[]
+    {
+        new("", "Home", "Ctrl+1"),
+        new("", "Controller", "Ctrl+2"),
+        new("", "Phones", "Ctrl+3"),
+        new("", "Mapping", "Ctrl+4"),
+        new("", "Diagnostics", "Ctrl+5"),
+        new("", "Settings", "Ctrl+6"),
+    };
+    private int _selectedPage;
+    public int SelectedPage { get => _selectedPage; set { if (value >= 0 && value < Pages.Count) Set(ref _selectedPage, value); } }
+    public ICommand NavigateCommand { get; }
+
+    // ================================================================== commands
     public ICommand ToggleServerCommand { get; }
+    public ICommand RestartServerCommand { get; }
     public ICommand OpenPairingCommand { get; }
     public ICommand ClosePairingCommand { get; }
-    public ICommand RevokeCommand { get; }
+    public ICommand StatusActionCommand { get; }
     public ICommand RetryDriverCommand { get; }
-    public ICommand ExportDiagnosticsCommand { get; }
-    public ICommand SaveProfileCommand { get; }
-    public ICommand DeleteProfileCommand { get; }
-    public ICommand RestoreDefaultsCommand { get; }
+    public ICommand OpenDriverHelpCommand { get; }
+    public ICommand OpenJoyCplCommand { get; }
+    public ICommand CopyCommand { get; }
+    public ICommand DismissErrorCommand { get; }
 
+    // ================================================================== server
     public void ToggleServer()
     {
         try
         {
-            if (_host.IsRunning) _host.Stop(); else _host.Start();
+            if (_host.IsRunning) _host.Stop(); else { _host.Start(); ReloadAddresses(); }
             Error = null;
         }
         catch (Exception ex)
         {
-            Error = $"Could not start the server: {ex.Message}. Another program may be using ports {_settings.ControlPort}/{_settings.InputPort}/{_settings.DiscoveryPort} - change them in Settings.";
+            Error = $"Another program may be using port {_settings.ControlPort}, {_settings.InputPort} or {_settings.DiscoveryPort}. Close it, or choose other ports in Settings. ({ex.Message})";
             _logger.LogError(ex, "Server start failed");
         }
-        OnPropertyChanged(string.Empty);
+        RefreshAll();
         ServerRunningChanged?.Invoke();
     }
 
+    private void RestartServer()
+    {
+        if (_host.IsRunning) _host.Stop();
+        ToggleServer();
+        RestartNeeded = false;
+    }
+
+    public void OpenPairing()
+    {
+        if (!_host.IsRunning) ToggleServer();
+        if (!_host.IsRunning) return;
+        _host.Pairing.Open();
+        _logger.LogInformation("Pairing window opened (120 s)");
+        SelectedPage = 0;
+        RefreshLive();
+    }
+
     public bool IsServerRunning => _host.IsRunning;
-
-    // ------------------------------------------------------------------ dashboard
-    public string? Error { get => _error; set { if (Set(ref _error, value)) OnPropertyChanged(nameof(HasError)); } }
+    public string ServerStateText => _host.IsRunning ? "Server on" : "Server off";
+    public string ServerToggleText => _host.IsRunning ? "Stop server" : "Start server";
+    public string? Error { get => _error; set { if (Set(ref _error, value)) { OnPropertyChanged(nameof(HasError)); RefreshAll(); } } }
     public bool HasError => !string.IsNullOrEmpty(_error);
-    public string ServerButtonText => _host.IsRunning ? "Stop server" : "Start server";
-    public string ServerState => _host.IsRunning ? "Running" : "Stopped";
 
-    public string ListenText => !_host.IsRunning ? "---" :
-        string.Join(", ", NetUtil.LocalIPv4Addresses().Select(a => a.ToString()).DefaultIfEmpty("no private network address found"));
-    public string PortsText => !_host.IsRunning ? "---" : $"TCP {_host.ControlPort} (pairing/session)   UDP {_host.InputPort} (input)   UDP {_host.DiscoveryPort?.ToString() ?? "off"} (discovery)";
+    // ================================================================== home status
+    private HomeStatus _status = HomeStatusRules.Compute(new HomeFacts(false, false, false, null, null, false, false, 0));
+    public HomeStatus Status => _status;
+    public string StatusGlyph => _status.Tone switch
+    {
+        StatusTone.Success => "", StatusTone.Critical => "", StatusTone.Attention => "",
+        _ => _host.IsRunning ? "" : "",
+    };
+    public string StatusToneKey => _status.Tone.ToString();
+    public bool HasStatusAction => _status.Action != HomeAction.None;
 
+    private void RunStatusAction()
+    {
+        switch (_status.Action)
+        {
+            case HomeAction.StartServer: if (!_host.IsRunning) ToggleServer(); else RestartServer(); break;
+            case HomeAction.OpenPairing: OpenPairing(); break;
+            case HomeAction.DriverHelp: OpenUrl(DriverReleasesUrl); break;
+            case HomeAction.RetryDriver: _host.Gamepad.Connect(); RefreshAll(); break;
+        }
+    }
+
+    private void ComputeStatus()
+    {
+        var kind = _host.Gamepad.Status.Kind;
+        var s = Session;
+        var next = HomeStatusRules.Compute(new HomeFacts(
+            kind == VirtualGamepadStatusKind.DriverMissing, kind == VirtualGamepadStatusKind.Error, _host.IsRunning, _error,
+            s == null ? null : DisplayName(s.DeviceId, s.DeviceName), _host.Sessions.IsNeutralized && s != null, _host.Pairing.IsOpen, Phones.Count));
+        if (next != _status)
+        {
+            _status = next;
+            OnPropertyChanged(nameof(Status)); OnPropertyChanged(nameof(StatusGlyph)); OnPropertyChanged(nameof(StatusToneKey)); OnPropertyChanged(nameof(HasStatusAction));
+            StatusChanged?.Invoke();
+        }
+    }
+
+    /// <summary>One-line status for the tray tooltip/menu.</summary>
+    public string TrayStatusLine => _status.Title;
+    public TrayBadge TrayBadge => _status.Tone switch
+    {
+        StatusTone.Success => TrayBadge.Playing, StatusTone.Critical => TrayBadge.Problem,
+        _ => _host.IsRunning ? TrayBadge.Ready : TrayBadge.None,
+    };
+
+    // ================================================================== setup checklist
+    public bool DriverReady => _host.Gamepad.Status.IsConnected;
+    public bool DriverMissing => _host.Gamepad.Status.Kind == VirtualGamepadStatusKind.DriverMissing;
+    public string DriverText => _host.Gamepad.Status.Kind switch
+    {
+        VirtualGamepadStatusKind.Connected => "Virtual Xbox 360 controller ready (ViGEmBus).",
+        VirtualGamepadStatusKind.DriverMissing => "ViGEmBus isn't installed. Install it yourself, then choose Try again.",
+        VirtualGamepadStatusKind.Error => "The driver reported an error: " + _host.Gamepad.Status.Message,
+        _ => "Not connected yet.",
+    };
+    public bool PhonePaired => Phones.Count > 0;
+    /// <summary>A phone has reached this PC at least once, which also proves the firewall lets it in.</summary>
+    public bool NetworkVerified => _everConnected;
+    public bool SetupComplete => DriverReady && _host.IsRunning && PhonePaired && NetworkVerified;
+
+    // ================================================================== pairing
     public bool PairingOpen => _host.Pairing.IsOpen;
-    public string PinText => _host.Pairing.Pin is { } p ? $"{p[..3]} {p[3..]}" : "------";
-    public string PairingStatus
+    public bool PairingClosed => !_host.Pairing.IsOpen;
+    public string PinText => UiFormat.Pin(_host.Pairing.Pin);
+    public string PinForScreenReader => _host.Pairing.Pin is { } p ? "PIN " + string.Join(" ", p.ToCharArray()) : "No PIN";
+    private (int Seconds, double Fraction) Countdown => UiFormat.Countdown(_host.Pairing.ExpiresAt, DateTimeOffset.UtcNow, ProtocolConstants.PinLifetime);
+    public double PinFraction => Countdown.Fraction;
+    public string PinSecondsText => PairingOpen ? $"{Countdown.Seconds}s" : "";
+    public string PairingHint
     {
         get
         {
-            if (!_host.IsRunning) return "Start the server first.";
-            if (_host.Pairing.ExpiresAt is not { } e) return _host.Pairing.FailuresInWindow >= ProtocolConstants.MaxPinFailuresPerWindow
-                ? "Closed: too many wrong PINs. Open pairing again." : "Closed. Click 'Open pairing' to show a PIN.";
-            var left = e - DateTimeOffset.UtcNow;
-            return $"Open - expires in {Math.Max(0, (int)left.TotalSeconds)} s. Enter this PIN on the phone, then confirm here.";
+            if (!_host.IsRunning) return "Start the server to pair a phone.";
+            if (_host.Pairing.IsOpen) return "On your phone: open Phone2Gamepad, pick this PC and enter the PIN. You'll be asked to approve it here.";
+            if (_host.Pairing.FailuresInWindow >= ProtocolConstants.MaxPinFailuresPerWindow) return "Pairing stopped after too many wrong PINs. Start again for a new PIN.";
+            return "Show a one-time PIN, valid for 2 minutes.";
         }
     }
+
+    // ================================================================== live controller + metrics
+    private GamepadState _liveState;
+    public GamepadState LiveState
+    {
+        get => _liveState;
+        private set
+        {
+            if (!Set(ref _liveState, value)) return;
+            OnPropertyChanged(nameof(LeftStickText)); OnPropertyChanged(nameof(RightStickText)); OnPropertyChanged(nameof(TriggersText));
+            OnPropertyChanged(nameof(PressedText)); OnPropertyChanged(nameof(LiveSummary));
+        }
+    }
+    public string LeftStickText => IsLive ? $"{LiveState.LeftX}, {LiveState.LeftY}" : UiFormat.Unavailable;
+    public string RightStickText => IsLive ? $"{LiveState.RightX}, {LiveState.RightY}" : UiFormat.Unavailable;
+    public string TriggersText => IsLive ? $"{LiveState.LeftTrigger}, {LiveState.RightTrigger}" : UiFormat.Unavailable;
+    public string PressedText
+    {
+        get
+        {
+            if (!IsLive) return "No phone connected";
+            var names = AllButtons.Where(b => (LiveState.Buttons & b) != 0).Select(UiFormat.ButtonShort).ToList();
+            if ((LiveState.Dpad & DpadFlags.Up) != 0) names.Add("D-pad up");
+            if ((LiveState.Dpad & DpadFlags.Down) != 0) names.Add("D-pad down");
+            if ((LiveState.Dpad & DpadFlags.Left) != 0) names.Add("D-pad left");
+            if ((LiveState.Dpad & DpadFlags.Right) != 0) names.Add("D-pad right");
+            return names.Count == 0 ? "Nothing" : string.Join(" · ", names);
+        }
+    }
+    private bool _isLive;
+    public bool IsLive
+    {
+        get => _isLive;
+        private set { if (Set(ref _isLive, value)) { OnPropertyChanged(nameof(LeftStickText)); OnPropertyChanged(nameof(RightStickText)); OnPropertyChanged(nameof(TriggersText)); OnPropertyChanged(nameof(PressedText)); OnPropertyChanged(nameof(LiveSummary)); } }
+    }
+    public string LiveSummary => !IsLive ? "Waiting for input from a phone" :
+        $"Left ({LiveState.LeftX}, {LiveState.LeftY})   Right ({LiveState.RightX}, {LiveState.RightY})   LT {LiveState.LeftTrigger}   RT {LiveState.RightTrigger}";
 
     private ActiveSession? Session => _host.Sessions.Current;
-    public string PhoneName => Session?.DeviceName ?? "No phone connected";
     public bool Connected => Session != null;
-    public string Transport => Session != null ? "Wi-Fi / LAN (UDP)" : "---";
-    public string Uptime => Session == null ? "---" : (DateTimeOffset.UtcNow - Session.StartedUtc) is var t ? $"{(int)t.TotalHours:00}:{t.Minutes:00}:{t.Seconds:00}" : "---";
-    public string Latency => Session?.RttMs is { } r ? $"{r:F0} ms" : "---";
-    public string PacketRate => _host.PacketsPerSecond is { } r && Session != null ? $"{r:F0} /s" : "---";
-    public string Received => _host.Stats.Received.ToString("N0");
-    public string Invalid => _host.Stats.InvalidTotal.ToString("N0");
-    public string Dropped => (_host.Stats.Duplicates + _host.Stats.OutOfOrder).ToString("N0");
-    public string InputState => Session == null ? "---" : _host.Sessions.IsNeutralized ? "Neutral (no recent input)" : "Active";
+    public string LatencyText => UiFormat.Latency(Session?.RttMs);
+    public string RateText => Session == null ? UiFormat.Unavailable : UiFormat.Rate(_host.PacketsPerSecond);
+    public string UptimeText => Session == null ? UiFormat.Unavailable : UiFormat.Duration(DateTimeOffset.UtcNow - Session.StartedUtc);
+    public string ReceivedText => _host.IsRunning ? UiFormat.Count(_host.Stats.Received) : UiFormat.Unavailable;
+    public string InvalidText => _host.IsRunning ? UiFormat.Count(_host.Stats.InvalidTotal) : UiFormat.Unavailable;
+    public string DroppedText => _host.IsRunning ? UiFormat.Count(_host.Stats.Duplicates + _host.Stats.OutOfOrder) : UiFormat.Unavailable;
+    public string InputStateText => Session == null ? "No phone connected" : _host.Sessions.IsNeutralized ? "Released (no recent input)" : "Receiving input";
 
-    public string DriverStatus => _host.Gamepad.Status.Message;
-    public bool DriverOk => _host.Gamepad.Status.IsConnected;
-    public string DriverKind => _host.Gamepad.Status.Kind.ToString();
-    public bool DriverNeedsHelp => _host.Gamepad.Status.Kind is VirtualGamepadStatusKind.DriverMissing or VirtualGamepadStatusKind.Error;
-    public string DriverHelp => _host.Gamepad.Status.Kind == VirtualGamepadStatusKind.DriverMissing
-        ? "Phone2Gamepad needs the ViGEmBus driver to create a virtual Xbox controller. It is not installed or not running. Download the signed installer from the ViGEmBus releases page on GitHub, run it yourself (administrator approval is required), then press Retry. The app never installs drivers on its own."
-        : _host.Gamepad.Status.Kind == VirtualGamepadStatusKind.Error
-            ? "The driver reported an error. Press Retry; if it persists, restart the PC or reinstall ViGEmBus. See the Log tab for details."
-            : "";
+    // ================================================================== network
+    public ObservableCollection<AddressChip> OtherAddresses { get; } = new();
+    private AddressChip? _primary;
+    public AddressChip? PrimaryAddress { get => _primary; private set => Set(ref _primary, value); }
+    public bool HasOtherAddresses => OtherAddresses.Count > 0;
+    public string PortsText => $"TCP {_settings.ControlPort} · UDP {_settings.InputPort} · discovery UDP {_settings.DiscoveryPort}";
 
-    private GamepadState _liveState;
-    public GamepadState LiveState { get => _liveState; private set => Set(ref _liveState, value); }
+    private void ReloadAddresses()
+    {
+        var all = NetworkInfo.Addresses();
+        var primary = AddressRanking.Primary(all);
+        PrimaryAddress = primary == null ? null : new AddressChip(primary.Address.ToString(), primary.AdapterName, true);
+        OtherAddresses.Clear();
+        foreach (var a in all.Where(a => a != primary)) OtherAddresses.Add(new AddressChip(a.Address.ToString(), a.AdapterName, false));
+        OnPropertyChanged(nameof(HasOtherAddresses));
+    }
 
-    // ------------------------------------------------------------------ devices
-    public ObservableCollection<PairedRow> Devices { get; } = new();
+    private string? _copied;
+    public string? CopiedNotice { get => _copied; private set => Set(ref _copied, value); }
+    private void CopyText(string s)
+    {
+        try { Clipboard.SetText(s); CopiedNotice = $"Copied {s}"; }
+        catch (System.Runtime.InteropServices.COMException) { CopiedNotice = "Couldn't copy (clipboard busy)"; }
+        var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        t.Tick += (_, _) => { t.Stop(); CopiedNotice = null; };
+        t.Start();
+    }
+
+    // ================================================================== phones
+    public ObservableCollection<PhoneRow> Phones { get; } = new();
+    public bool HasPhones => Phones.Count > 0;
+    public bool NoPhones => Phones.Count == 0;
+
+    public string DisplayName(string deviceId, string fallback) =>
+        _settings.PhoneLabels.TryGetValue(deviceId, out var l) && !string.IsNullOrWhiteSpace(l) ? l : fallback;
+
     private void ReloadDevices()
     {
-        Devices.Clear();
-        foreach (var d in _host.Devices.List().OrderBy(d => d.PairedAtUtc))
-            Devices.Add(new PairedRow(d.DeviceId, d.DeviceName, d.PairedAtUtc.LocalDateTime.ToString("g")));
+        Phones.Clear();
+        foreach (var d in _host.Devices.List().OrderByDescending(d => _settings.PhoneLastSeen.GetValueOrDefault(d.DeviceId, d.PairedAtUtc)))
+            Phones.Add(new PhoneRow(this, d));
+        OnPropertyChanged(nameof(HasPhones)); OnPropertyChanged(nameof(NoPhones)); OnPropertyChanged(nameof(PhonePaired)); OnPropertyChanged(nameof(SetupComplete));
+        ComputeStatus();
     }
 
-    // ------------------------------------------------------------------ mapping
-    public ObservableCollection<ButtonMapRow> ButtonMap { get; } = new();
-    public GamepadButtons[] TargetChoices => AllButtons;
-    public ObservableCollection<string> ProfileNames { get; } = new();
-
-    private bool _invLX, _invLY, _invRX, _invRY, _ltDigital, _rtDigital;
-    private double _leftDead, _rightDead, _leftSens = 1, _rightSens = 1, _trigMin, _trigMax = 255;
-    private string _selectedProfile = "Default", _profileName = "", _mappingMessage = "";
-
-    public bool InvertLeftX { get => _invLX; set { if (Set(ref _invLX, value)) ApplyMapping(); } }
-    public bool InvertLeftY { get => _invLY; set { if (Set(ref _invLY, value)) ApplyMapping(); } }
-    public bool InvertRightX { get => _invRX; set { if (Set(ref _invRX, value)) ApplyMapping(); } }
-    public bool InvertRightY { get => _invRY; set { if (Set(ref _invRY, value)) ApplyMapping(); } }
-    public bool LeftTriggerDigital { get => _ltDigital; set { if (Set(ref _ltDigital, value)) ApplyMapping(); } }
-    public bool RightTriggerDigital { get => _rtDigital; set { if (Set(ref _rtDigital, value)) ApplyMapping(); } }
-    public double LeftDeadZone { get => _leftDead; set { if (Set(ref _leftDead, Math.Round(value, 2))) ApplyMapping(); } }
-    public double RightDeadZone { get => _rightDead; set { if (Set(ref _rightDead, Math.Round(value, 2))) ApplyMapping(); } }
-    public double LeftSensitivity { get => _leftSens; set { if (Set(ref _leftSens, Math.Round(value, 2))) ApplyMapping(); } }
-    public double RightSensitivity { get => _rightSens; set { if (Set(ref _rightSens, Math.Round(value, 2))) ApplyMapping(); } }
-    public double TriggerMin { get => _trigMin; set { if (Set(ref _trigMin, Math.Round(value))) ApplyMapping(); } }
-    public double TriggerMax { get => _trigMax; set { if (Set(ref _trigMax, Math.Round(value))) ApplyMapping(); } }
-    public string MappingMessage { get => _mappingMessage; private set => Set(ref _mappingMessage, value); }
-    public string ProfileName { get => _profileName; set => Set(ref _profileName, value); }
-    public string SelectedProfile
+    internal void RevokePhone(PhoneRow row)
     {
-        get => _selectedProfile;
-        set
-        {
-            if (value == null || !Set(ref _selectedProfile, value)) return;
-            LoadProfile(FindProfile(value));
-            _settings.ActiveProfile = value; SaveSettings();
-        }
+        if (Confirm?.Invoke(new DialogRequest("Remove this phone?",
+                $"\"{row.DisplayName}\" will be disconnected and its pairing key deleted. To use it again you'll need to pair it with a new PIN.",
+                "Remove", "Cancel", Destructive: true)) != true) return;
+        _host.Revoke(row.DeviceId);
+        _settings.PhoneLabels.Remove(row.DeviceId);
+        _settings.PhoneLastSeen.Remove(row.DeviceId);
+        SaveSettings();
+        _logger.LogInformation("Paired phone removed by the user");
     }
 
-    private MappingProfile FindProfile(string name) => _settings.Profiles.FirstOrDefault(p => p.Name == name) ?? MappingProfile.CreateDefault();
-
-    private void LoadProfile(MappingProfile p)
+    internal void RenamePhone(PhoneRow row, string label)
     {
-        _loadingProfile = true;
-        InvertLeftX = p.InvertLeftX; InvertLeftY = p.InvertLeftY; InvertRightX = p.InvertRightX; InvertRightY = p.InvertRightY;
-        LeftDeadZone = p.LeftDeadZone; RightDeadZone = p.RightDeadZone; LeftSensitivity = p.LeftSensitivity; RightSensitivity = p.RightSensitivity;
-        TriggerMin = p.TriggerMin; TriggerMax = p.TriggerMax; LeftTriggerDigital = p.LeftTriggerDigital; RightTriggerDigital = p.RightTriggerDigital;
-        foreach (var row in ButtonMap) row.Target = p.ButtonMap.TryGetValue(row.Source, out var t) ? t : row.Source;
-        _loadingProfile = false;
-        ApplyMapping();
+        label = label.Trim();
+        if (label.Length > AppSettings.MaxPhoneLabelLength) label = label[..AppSettings.MaxPhoneLabelLength];
+        if (label.Length == 0 || label == row.OriginalName) _settings.PhoneLabels.Remove(row.DeviceId);
+        else _settings.PhoneLabels[row.DeviceId] = label;
+        SaveSettings();
+        ReloadDevices();
     }
 
-    private MappingProfile BuildProfile(string name)
+    internal bool IsConnected(string deviceId) => Session?.DeviceId == deviceId;
+    internal DateTimeOffset? LastSeen(string deviceId) => _settings.PhoneLastSeen.TryGetValue(deviceId, out var t) ? t : null;
+
+    private void OnSessionStarted(ActiveSession s)
     {
-        var p = new MappingProfile
-        {
-            Name = name, InvertLeftX = InvertLeftX, InvertLeftY = InvertLeftY, InvertRightX = InvertRightX, InvertRightY = InvertRightY,
-            LeftDeadZone = LeftDeadZone, RightDeadZone = RightDeadZone, LeftSensitivity = LeftSensitivity, RightSensitivity = RightSensitivity,
-            TriggerMin = (byte)Math.Clamp(TriggerMin, 0, 255), TriggerMax = (byte)Math.Clamp(TriggerMax, 0, 255),
-            LeftTriggerDigital = LeftTriggerDigital, RightTriggerDigital = RightTriggerDigital,
-        };
-        foreach (var r in ButtonMap.Where(r => r.Target != r.Source)) p.ButtonMap[r.Source] = r.Target;
-        return p;
+        _everConnected = true;
+        _settings.PhoneLastSeen[s.DeviceId] = DateTimeOffset.UtcNow;
+        SaveSettings();
+        ReloadDevices();
+        RefreshAll();
+        PhoneConnected?.Invoke(DisplayName(s.DeviceId, s.DeviceName));
     }
 
-    /// <summary>Validates the editor state; applies it live only if valid (invalid combinations are explained, never applied).</summary>
-    public void ApplyMapping()
+    private void OnSessionEnded(SessionEndedEventArgs e)
     {
-        if (_loadingProfile) return;
-        var p = BuildProfile(SelectedProfile);
-        var problems = p.Validate();
-        if (problems.Count == 0) { _host.Mapping = p; MappingMessage = "Mapping applied."; }
-        else MappingMessage = "Not applied: " + string.Join(" ", problems);
+        _settings.PhoneLastSeen[e.Session.DeviceId] = DateTimeOffset.UtcNow;
+        SaveSettings();
+        ReloadDevices();
+        RefreshAll();
+        PhoneDisconnected?.Invoke(DisplayName(e.Session.DeviceId, e.Session.DeviceName), e.Reason);
     }
 
-    private void SaveProfile()
+    // ================================================================== refresh
+    private static readonly string[] LiveProps =
     {
-        var name = ProfileName.Trim();
-        if (name.Length == 0 || name.Equals("Default", StringComparison.OrdinalIgnoreCase)) { MappingMessage = "Enter a profile name other than 'Default'."; return; }
-        var p = BuildProfile(name);
-        var problems = p.Validate();
-        if (problems.Count > 0) { MappingMessage = "Cannot save: " + string.Join(" ", problems); return; }
-        _settings.Profiles.RemoveAll(x => x.Name == name);
-        _settings.Profiles.Add(p);
-        if (!ProfileNames.Contains(name)) ProfileNames.Add(name);
-        _selectedProfile = name; OnPropertyChanged(nameof(SelectedProfile));
-        _settings.ActiveProfile = name; SaveSettings();
-        _host.Mapping = p;
-        MappingMessage = $"Profile '{name}' saved.";
+        nameof(IsServerRunning), nameof(ServerStateText), nameof(ServerToggleText), nameof(PairingOpen), nameof(PairingClosed), nameof(PinText),
+        nameof(PinForScreenReader), nameof(PinFraction), nameof(PinSecondsText), nameof(PairingHint), nameof(LiveSummary), nameof(Connected),
+        nameof(LatencyText), nameof(RateText), nameof(UptimeText), nameof(ReceivedText), nameof(InvalidText), nameof(DroppedText), nameof(InputStateText),
+        nameof(DriverReady), nameof(DriverMissing), nameof(DriverText), nameof(NetworkVerified), nameof(SetupComplete), nameof(PortsText),
+    };
+
+    private void RefreshLive()
+    {
+        foreach (var p in LiveProps) OnPropertyChanged(p);
+        ComputeStatus();
+        RefreshDiagnosticsCounters();
+        foreach (var r in Phones) r.Refresh();
     }
 
-    private void DeleteProfile()
+    private void RefreshAll()
     {
-        var name = SelectedProfile;
-        if (name == "Default") return;
-        _settings.Profiles.RemoveAll(x => x.Name == name);
-        ProfileNames.Remove(name);
-        SelectedProfile = "Default";
+        RefreshLive();
+        CommandManager.InvalidateRequerySuggested();
     }
 
-    // ------------------------------------------------------------------ settings
-    public bool MinimizeToTrayOnClose { get => _settings.MinimizeToTrayOnClose; set { _settings.MinimizeToTrayOnClose = value; SaveSettings(); OnPropertyChanged(); } }
-    public bool StartServerOnLaunch { get => _settings.StartServerOnLaunch; set { _settings.StartServerOnLaunch = value; SaveSettings(); OnPropertyChanged(); } }
-    public bool StartWithWindows
+    // ================================================================== helpers
+    private void OpenUrl(string url)
     {
-        get => _settings.StartWithWindows;
-        set
-        {
-            if (value == _settings.StartWithWindows) return;
-            if (value && Confirm?.Invoke("Start with Windows",
-                    "Start Phone2Gamepad (minimized to the tray) every time you sign in to Windows?\n\nThis adds a per-user startup entry; you can turn it off here at any time.") != true)
-            { OnPropertyChanged(); return; }
-            try { StartupRegistration.Set(value); _settings.StartWithWindows = value; SaveSettings(); }
-            catch (Exception ex) { Error = $"Could not change the startup setting: {ex.Message}"; _logger.LogError(ex, "Startup registration failed"); }
-            OnPropertyChanged();
-        }
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { Error = $"Couldn't open the browser. Visit {url} manually."; }
     }
-    public string[] LogLevels { get; } = { "Debug", "Information", "Warning", "Error" };
-    public string LogLevel
-    {
-        get => _settings.LogLevel;
-        set { _settings.LogLevel = value; if (Enum.TryParse<LogLevel>(value, out var l)) _log.MinimumLevel = l; SaveSettings(); OnPropertyChanged(); }
-    }
-    public string ServerName { get => _settings.ServerName; set { _settings.ServerName = value; SaveSettings(); OnPropertyChanged(); } }
-    public int ControlPort { get => _settings.ControlPort; set { if (value is >= 1024 and <= 65535) { _settings.ControlPort = value; SaveSettings(); } OnPropertyChanged(); } }
-    public int InputPort { get => _settings.InputPort; set { if (value is >= 1024 and <= 65535) { _settings.InputPort = value; SaveSettings(); } OnPropertyChanged(); } }
-    public int DiscoveryPort { get => _settings.DiscoveryPort; set { if (value is >= 1024 and <= 65535) { _settings.DiscoveryPort = value; SaveSettings(); } OnPropertyChanged(); } }
-    public string Version => typeof(MainViewModel).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
-    public ObservableCollection<LogEntry> LogEntries => _log.Entries;
 
-    private void SaveSettings()
+    private void Shell(string target)
+    {
+        try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { _logger.LogWarning("Could not open {Target}: {Message}", target, ex.Message); }
+    }
+
+    internal void SaveSettings()
     {
         try { _settings.Save(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _logger.LogError(ex, "Settings save failed"); }
     }
 
-    // ------------------------------------------------------------------ diagnostics (PINs/secrets always removed; IPs, device ids/names masked unless opted in)
-    private bool _includeNetworkDetails;
-    public bool IncludeNetworkDetails { get => _includeNetworkDetails; set => Set(ref _includeNetworkDetails, value); }
+    public void Dispose() { _refresh.Stop(); _visual.Stop(); }
+}
 
-    public string BuildDiagnostics() =>
-        DiagnosticsReport.Build(_host, Version, _settings.LogLevel, _settings.ActiveProfile, _log.Snapshot().Select(l => l.Text),
-            new DiagnosticsOptions(MaskNetworkDetails: !IncludeNetworkDetails));
+/// <summary>One paired phone in the Phones page.</summary>
+public sealed class PhoneRow : ObservableObject
+{
+    private readonly MainViewModel _owner;
+    private bool _editing;
+    private string _editText = "";
 
-    private void ExportDiagnostics()
+    public PhoneRow(MainViewModel owner, PairedDevice d)
     {
-        var dlg = new Microsoft.Win32.SaveFileDialog { FileName = $"Phone2Gamepad-diagnostics-{DateTime.Now:yyyyMMdd-HHmm}.txt", Filter = "Text (*.txt)|*.txt" };
-        if (dlg.ShowDialog() != true) return;
-        try { DiagnosticsReport.WriteTo(dlg.FileName, BuildDiagnostics()); _logger.LogInformation("Diagnostics exported"); }
-        catch (IOException ex) { Error = $"Export failed: {ex.Message}"; }
+        _owner = owner;
+        DeviceId = d.DeviceId; OriginalName = d.DeviceName; PairedAt = d.PairedAtUtc;
+        RevokeCommand = new RelayCommand(() => _owner.RevokePhone(this));
+        EditCommand = new RelayCommand(() => { EditText = DisplayName; IsEditing = true; });
+        SaveCommand = new RelayCommand(() => { IsEditing = false; _owner.RenamePhone(this, EditText); });
+        CancelCommand = new RelayCommand(() => IsEditing = false);
     }
 
-    public void Dispose() { _refresh.Stop(); _visual.Stop(); }
+    public string DeviceId { get; }
+    public string OriginalName { get; }
+    public DateTimeOffset PairedAt { get; }
+    public string DisplayName => _owner.DisplayName(DeviceId, OriginalName);
+    public bool HasCustomName => DisplayName != OriginalName;
+    public bool IsConnected => _owner.IsConnected(DeviceId);
+    public string Subtitle =>
+        (HasCustomName ? OriginalName + " · " : "") + $"Paired {PairedAt.ToLocalTime():d MMM yyyy}" +
+        (IsConnected ? "" : $" · Last connected {UiFormat.RelativeTime(_owner.LastSeen(DeviceId), DateTimeOffset.UtcNow).ToLowerInvariant()}");
+    public bool IsEditing { get => _editing; set => Set(ref _editing, value); }
+    public string EditText { get => _editText; set => Set(ref _editText, value); }
+    public ICommand RevokeCommand { get; }
+    public ICommand EditCommand { get; }
+    public ICommand SaveCommand { get; }
+    public ICommand CancelCommand { get; }
+
+    public void Refresh() { OnPropertyChanged(nameof(IsConnected)); OnPropertyChanged(nameof(Subtitle)); }
 }

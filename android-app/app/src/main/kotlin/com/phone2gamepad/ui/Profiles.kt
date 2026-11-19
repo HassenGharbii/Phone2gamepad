@@ -31,6 +31,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.text.style.TextOverflow
 import com.phone2gamepad.AppViewModel
 import com.phone2gamepad.data.ControllerType
 import com.phone2gamepad.data.HandbrakeButton
@@ -45,12 +53,10 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 
 private fun summary(p: Profile, skinName: String): String {
-    val trig = if (p.triggerMode == TriggerMode.Digital) "digital triggers" else "analog triggers"
-    val hand = if (p.leftHanded) " · left-handed" else ""
     val n = p.controls.size
-    val custom = if (n == 0) "default layout" else "$n customised control${if (n == 1) "" else "s"}"
-    return "${p.controllerType.label} controller · $custom · $skinName skin · dead zone ${(p.deadZone * 100).toInt()}% · sensitivity ${"%.2f".format(p.sensitivity)}x · " +
-        "${p.curve.name.lowercase()} curve · $trig$hand"
+    val custom = if (n == 0) "standard layout" else "custom layout"
+    val hand = if (p.leftHanded) " · left-handed" else ""
+    return "${p.controllerType.label} · $skinName skin · $custom$hand"
 }
 
 /** Reads at most [max] bytes; null if the stream is longer (so a huge file cannot exhaust memory). */
@@ -130,72 +136,59 @@ fun ProfilesScreen(vm: AppViewModel) {
         }
     }
 
-    Page("Layouts & profiles", onBack = { vm.back() }) {
-        vm.notice?.let { msg ->
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Palette.Surface)) {
-                Row(Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(msg, Modifier.weight(1f), color = Palette.Accent)
-                    TextButton(onClick = { vm.notice = null }) { Text("OK") }
-                }
-            }
-        }
+    Page(
+        "Profiles", onBack = { vm.back() },
+        actions = {
+            TextAction("Import", { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
+        },
+        bottomBar = { PrimaryButton("New profile", { creating = true }, Modifier.fillMaxWidth(), icon = P2GIcons.Add) },
+    ) {
         if (backup) {
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Palette.Surface)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Saved profiles could not be read", color = Palette.Warn, style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "The profile file was damaged (or written by a newer version), so a fresh Standard profile is being used. " +
-                            "The unreadable data was kept aside.",
-                        color = Palette.TextDim,
-                    )
-                    TextButton(onClick = { vm.dismissProfileBackupNotice() }) { Text("Dismiss") }
-                }
-            }
+            Notice(
+                "The profile file was damaged (or written by a newer version), so a fresh Standard profile is being used. The unreadable data was kept aside.",
+                Tone.Warn, title = "Saved profiles could not be read", actionLabel = "Dismiss", onAction = { vm.dismissProfileBackupNotice() },
+            )
         }
-        Text("The active profile is used on the gamepad. Editing a layout is optional; the Standard layout works as it is.", color = Palette.TextDim)
+        Text("Each profile has its own controller type, skin, layout and tuning. The selected one is used when you play.", color = Palette.TextDim, style = MaterialTheme.typography.bodyMedium)
         for (p in book.profiles) {
             val active = p.id == book.activeId
             var menu by remember(p.id) { mutableStateOf(false) }
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Palette.Surface)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(p.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                        if (active) Text("Active", color = Palette.Accent, style = MaterialTheme.typography.labelLarge)
+            val skin = library.resolve(p.skinId)
+            AppCard(selected = active, padding = Space.m, onClick = if (active) null else ({ vm.selectProfile(p.id) })) {
+                ProfilePreview(p, skin, rememberBackgroundImage(vm, p.background), Modifier.fillMaxWidth())
+                Row(Modifier.padding(top = Space.s, start = Space.xs), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(p.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                            if (active) { Spacer(Modifier.width(Space.s)); StatusChip("In use", Tone.Ok) }
+                        }
+                        Text(summary(p, skin.name), color = Palette.TextDim, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
-                    Text(summary(p, library.resolve(p.skinId).name), color = Palette.TextDim, style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (!active) Button(onClick = { vm.selectProfile(p.id) }) { Text("Use") }
-                        OutlinedButton(onClick = { vm.openLayoutEditor(p.id) }) { Text("Edit layout") }
-                        Box {
-                            OutlinedButton(onClick = { menu = true }) { Text("More") }
-                            DropdownMenu(menu, { menu = false }) {
-                                DropdownMenuItem(text = { Text("Controller & background…") }, onClick = { menu = false; appearanceFor = p.id })
-                                DropdownMenuItem(text = { Text("Skin…") }, onClick = { menu = false; vm.openSkins(p.id) })
-                                DropdownMenuItem(text = { Text("Tuning…") }, onClick = { menu = false; vm.openTuning(p.id) })
-                                DropdownMenuItem(text = { Text("Rename…") }, onClick = { menu = false; renaming = p })
-                                DropdownMenuItem(text = { Text("Duplicate") }, onClick = { menu = false; vm.duplicateProfile(p.id) })
-                                DropdownMenuItem(text = { Text("Export…") }, onClick = {
-                                    menu = false
-                                    exporting = p
-                                    exportLauncher.launch(p.name.replace(Regex("[^A-Za-z0-9 _-]"), "_") + ".p2g.json")
-                                })
-                                DropdownMenuItem(text = { Text("Reset to default") }, onClick = { menu = false; resetting = p })
-                                DropdownMenuItem(
-                                    text = { Text("Delete") }, enabled = book.profiles.size > 1,
-                                    onClick = { menu = false; deleting = p },
-                                )
-                            }
+                    Box {
+                        IconButton(onClick = { menu = true }) { Icon(P2GIcons.MoreVert, contentDescription = "More for ${p.name}") }
+                        DropdownMenu(menu, { menu = false }) {
+                            if (!active) DropdownMenuItem(text = { Text("Use this profile") }, onClick = { menu = false; vm.selectProfile(p.id) })
+                            DropdownMenuItem(text = { Text("Edit layout") }, onClick = { menu = false; vm.openLayoutEditor(p.id) })
+                            DropdownMenuItem(text = { Text("Controller type & art") }, onClick = { menu = false; appearanceFor = p.id })
+                            DropdownMenuItem(text = { Text("Skin") }, onClick = { menu = false; vm.openSkins(p.id) })
+                            DropdownMenuItem(text = { Text("Tuning") }, onClick = { menu = false; vm.openTuning(p.id) })
+                            HorizontalDivider(color = Palette.OutlineSoft)
+                            DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; renaming = p })
+                            DropdownMenuItem(text = { Text("Duplicate") }, onClick = { menu = false; vm.duplicateProfile(p.id) })
+                            DropdownMenuItem(text = { Text("Export to file") }, onClick = {
+                                menu = false
+                                exporting = p
+                                exportLauncher.launch(p.name.replace(Regex("[^A-Za-z0-9 _-]"), "_") + ".p2g.json")
+                            })
+                            DropdownMenuItem(text = { Text("Reset to default") }, onClick = { menu = false; resetting = p })
+                            DropdownMenuItem(
+                                text = { Text("Delete", color = if (book.profiles.size > 1) Palette.Danger else Palette.TextFaint) }, enabled = book.profiles.size > 1,
+                                onClick = { menu = false; deleting = p },
+                            )
                         }
                     }
                 }
             }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { creating = true }, Modifier.weight(1f)) { Text("New profile") }
-            OutlinedButton(
-                onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
-                Modifier.weight(1f),
-            ) { Text("Import…") }
         }
     }
 
@@ -245,28 +238,31 @@ fun TuningScreen(vm: AppViewModel) {
         vm.editProfile(stored.id, f)
     }
 
-    Page("Tuning · ${stored.name}", onBack = { vm.back() }) {
+    Page("Tuning", onBack = { vm.back() }) {
+        Text("Profile \"${stored.name}\" · ${stored.controllerType.label}", style = MaterialTheme.typography.bodySmall, color = Palette.TextDim)
+        SectionTitle("Sticks")
         SliderRow("Stick dead zone", p.deadZone, 0f..Profile.MAX_DEADZONE, { "${(it * 100).toInt()}%" }, { val v = p.deadZone; vm.editProfile(stored.id) { it.copy(deadZone = v) } }) {
             p = p.copy(deadZone = it)
         }
         SliderRow("Stick sensitivity", p.sensitivity, Profile.MIN_SENS..Profile.MAX_SENS, { "%.2fx".format(it) }, { val v = p.sensitivity; vm.editProfile(stored.id) { it.copy(sensitivity = v) } }) {
             p = p.copy(sensitivity = it)
         }
-        Text("Response curve")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Response curve", style = MaterialTheme.typography.titleSmall)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (c in ResponseCurve.entries) FilterChip(selected = p.curve == c, onClick = { apply { it.copy(curve = c) } }, label = { Text(c.name) })
         }
         Text(
             "Linear: output follows the stick. Quadratic / Cubic: finer control near the centre, full output only at the edge.",
             color = Palette.TextDim, style = MaterialTheme.typography.bodySmall,
         )
+        SectionTitle("Triggers")
         SwitchRow("Digital triggers", "LT/RT send a full press on touch instead of analog position", p.triggerMode == TriggerMode.Digital) { on ->
             apply { it.copy(triggerMode = if (on) TriggerMode.Digital else TriggerMode.Analog) }
         }
         if (stored.controllerType == ControllerType.Racing) {
             SectionTitle("Steering wheel")
-            Text("Wheel rotation (lock to lock)")
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Wheel rotation (lock to lock)", style = MaterialTheme.typography.titleSmall)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (v in Profile.WHEEL_LOCK_CHOICES) FilterChip(
                     selected = p.wheelLockDeg == v, onClick = { apply { it.copy(wheelLockDeg = v) } }, label = { Text("${v.toInt()}°") },
                 )
@@ -278,8 +274,8 @@ fun TuningScreen(vm: AppViewModel) {
             SliderRow("Wheel centre dead zone", p.wheelDeadZone, 0f..Profile.WHEEL_MAX_DEADZONE, { "${(it * 100).toInt()}%" }, { val v = p.wheelDeadZone; vm.editProfile(stored.id) { it.copy(wheelDeadZone = v) } }) {
                 p = p.copy(wheelDeadZone = it)
             }
-            Text("Wheel response")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Wheel response", style = MaterialTheme.typography.titleSmall)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (c in ResponseCurve.entries) FilterChip(selected = p.wheelCurve == c, onClick = { apply { it.copy(wheelCurve = c) } }, label = { Text(c.name) })
             }
             SwitchRow("Wheel returns to centre", "Off: the wheel stays turned where you let go", p.wheelSelfCenter) { on ->
@@ -292,15 +288,15 @@ fun TuningScreen(vm: AppViewModel) {
                 apply { it.copy(pedalPressDown = on) }
             }
             SwitchRow("Full press on touch", "Gas and brake go to 100% as soon as you touch them", p.pedalFullPress) { on -> apply { it.copy(pedalFullPress = on) } }
-            Text("Brake response")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Brake response", style = MaterialTheme.typography.titleSmall)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (c in ResponseCurve.entries) FilterChip(selected = p.brakeCurve == c, onClick = { apply { it.copy(brakeCurve = c) } }, label = { Text(c.name) })
             }
             SliderRow("Brake sensitivity", p.brakeSensitivity, Profile.MIN_SENS..Profile.MAX_SENS, { "%.2fx".format(it) }, { val v = p.brakeSensitivity; vm.editProfile(stored.id) { it.copy(brakeSensitivity = v) } }) {
                 p = p.copy(brakeSensitivity = it)
             }
-            Text("Handbrake sends")
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Handbrake sends", style = MaterialTheme.typography.titleSmall)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (h in HandbrakeButton.entries) FilterChip(selected = p.handbrake == h, onClick = { apply { it.copy(handbrake = h) } }, label = { Text(h.label) })
             }
 
@@ -316,8 +312,8 @@ fun TuningScreen(vm: AppViewModel) {
             }
             SwitchRow("Invert tilt direction", "Swap left and right", p.tiltInvert) { on -> apply { it.copy(tiltInvert = on) } }
             Text("45° of tilt gives full steering at 1.00x.", color = Palette.TextDim, style = MaterialTheme.typography.bodySmall)
-            SectionTitle("General")
         }
+        SectionTitle("Layout")
         SwitchRow("Sticks return to centre", "Off: a stick stays where you released it until you touch it again", p.stickReturnToCenter) { on ->
             apply { it.copy(stickReturnToCenter = on) }
         }
@@ -329,11 +325,9 @@ fun TuningScreen(vm: AppViewModel) {
             "Overall control size", p.globalScale, Profile.MIN_GLOBAL_SCALE..Profile.MAX_GLOBAL_SCALE, { "%.2fx".format(it) },
             { val v = p.globalScale; vm.editProfile(stored.id) { it.copy(globalScale = v) } },
         ) { p = p.copy(globalScale = it) }
-        Button(onClick = { vm.openLayoutEditor(stored.id) }, Modifier.fillMaxWidth()) { Text("Edit layout") }
+        SecondaryButton("Move and resize controls", { vm.openLayoutEditor(stored.id) }, Modifier.fillMaxWidth(), icon = P2GIcons.Layout)
     }
 }
 
 @Composable
-private fun SectionTitle(text: String) {
-    Text(text, color = Palette.Accent, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-}
+private fun SectionTitle(text: String) = SectionHeader(text)

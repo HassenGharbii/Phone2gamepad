@@ -20,6 +20,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -86,66 +88,72 @@ fun AppearanceDialog(vm: AppViewModel, profile: Profile, skin: Skin, onChange: (
 
     fun setBg(b: Background) = onChange(profile.copy(background = b.sanitized()))
 
+    val landscape = isLandscapePhone()
+    val preview: @Composable (Modifier) -> Unit = { m ->
+        ControllerPreview(profile.controllerType, skin, bg, image, m.aspectRatio(2.2f).clip(RoundedCornerShape(12.dp)))
+    }
+    val options: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
+            SectionHeader("Controller type")
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                for (t in ControllerType.entries) TypeCard(t, skin, bg, image, selected = t == profile.controllerType) {
+                    if (t != profile.controllerType) {
+                        vm.connection.input.releaseAll()
+                        onChange(profile.copy(controllerType = t))
+                    }
+                }
+            }
+            Text(profile.controllerType.description, style = MaterialTheme.typography.bodySmall, color = Palette.TextDim)
+            SectionHeader("Printed on the controller")
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                FilterChip(selected = bg.kind == BackgroundKind.None, onClick = { setBg(Background.None) }, label = { Text("None") })
+                for (id in BuiltinBackgrounds.IDS) {
+                    FilterChip(
+                        selected = bg.kind == BackgroundKind.Builtin && bg.ref == id,
+                        onClick = { setBg(Background(BackgroundKind.Builtin, id, bg.scrim)) },
+                        label = { Text(BuiltinBackgrounds.label(id)) },
+                    )
+                }
+                if (bg.kind == BackgroundKind.Image) FilterChip(selected = true, onClick = {}, label = { Text("My picture") })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                SecondaryButton("Choose picture", { picker.launch(arrayOf("image/*")) })
+                if (bg.kind == BackgroundKind.Image) SecondaryButton("Remove", { setBg(Background.None) })
+            }
+            error?.let { Notice(it, Tone.Error) }
+            Text(
+                "Your picture stays on this phone. It is never sent to the PC or included when you export a profile or skin.",
+                style = MaterialTheme.typography.bodySmall, color = Palette.TextDim,
+            )
+            if (bg.kind != BackgroundKind.None) {
+                SliderRow("Darkness", bg.scrim, 0f..Background.MAX_SCRIM, { "${(it * 100).toInt()}%" }) { setBg(bg.copy(scrim = it)) }
+            }
+            if (bg.kind == BackgroundKind.Image) {
+                SliderRow("Zoom", bg.zoom, 1f..Background.MAX_ZOOM, { "%.2fx".format(it) }) { setBg(bg.copy(zoom = it)) }
+                SliderRow("Left / right", bg.offsetX, -1f..1f, { "%+.2f".format(it) }) { setBg(bg.copy(offsetX = it)) }
+                SliderRow("Up / down", bg.offsetY, -1f..1f, { "%+.2f".format(it) }) { setBg(bg.copy(offsetY = it)) }
+            }
+        }
+    }
+
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
-            Modifier.fillMaxWidth(0.96f).fillMaxHeight(0.92f), shape = RoundedCornerShape(16.dp), color = Palette.Surface,
+            Modifier.fillMaxWidth(if (landscape) 0.96f else 0.94f).fillMaxHeight(if (landscape) 0.94f else 0.9f),
+            shape = MaterialTheme.shapes.large, color = Palette.Surface,
         ) {
-            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-                Row(Modifier.fillMaxSize().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Column(Modifier.weight(0.9f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Preview", fontSize = 13.sp, color = Palette.TextDim)
-                        ControllerPreview(profile.controllerType, skin, bg, image, Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(10.dp)))
-                        Text(profile.controllerType.description, fontSize = 12.sp, color = Palette.TextDim)
-                        error?.let { Text(it, fontSize = 12.sp, color = Palette.Danger) }
-                        Row(Modifier.weight(1f)) {}
-                        TextButton(onClick = onClose, Modifier.align(Alignment.End)) { Text("Done") }
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().padding(start = Space.l, end = Space.xs, top = Space.xs), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Controller type & art", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                    TextAction("Done", onClose)
+                }
+                if (landscape) {
+                    Row(Modifier.weight(1f).padding(horizontal = Space.l, vertical = Space.s), horizontalArrangement = Arrangement.spacedBy(Space.l)) {
+                        Column(Modifier.weight(0.9f)) { preview(Modifier.fillMaxWidth()) }
+                        Column(Modifier.weight(1.2f).verticalScroll(rememberScrollState())) { options() }
                     }
-                    Column(
-                        Modifier.weight(1.3f).verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text("Controller", fontSize = 14.sp)
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            for (t in ControllerType.entries) TypeCard(t, skin, bg, image, selected = t == profile.controllerType) {
-                                if (t != profile.controllerType) {
-                                    vm.connection.input.releaseAll()
-                                    onChange(profile.copy(controllerType = t))
-                                }
-                            }
-                        }
-                        Text("Printed on the controller", fontSize = 14.sp)
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            FilterChip(selected = bg.kind == BackgroundKind.None, onClick = { setBg(Background.None) }, label = { Text("None", fontSize = 12.sp) })
-                            for (id in BuiltinBackgrounds.IDS) {
-                                FilterChip(
-                                    selected = bg.kind == BackgroundKind.Builtin && bg.ref == id,
-                                    onClick = { setBg(Background(BackgroundKind.Builtin, id, bg.scrim)) },
-                                    label = { Text(BuiltinBackgrounds.label(id), fontSize = 12.sp) },
-                                )
-                            }
-                            if (bg.kind == BackgroundKind.Image) FilterChip(selected = true, onClick = {}, label = { Text("My picture", fontSize = 12.sp) })
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { picker.launch(arrayOf("image/*")) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)) {
-                                Text("Choose picture…", fontSize = 12.sp)
-                            }
-                            if (bg.kind == BackgroundKind.Image) OutlinedButton(onClick = { setBg(Background.None) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)) {
-                                Text("Remove picture", fontSize = 12.sp)
-                            }
-                        }
-                        Text(
-                            "The picture stays on this phone only; it is never sent to the PC or included when you export a profile or skin.",
-                            fontSize = 11.sp, color = Palette.TextDim,
-                        )
-                        if (bg.kind != BackgroundKind.None) {
-                            MiniSlider("Darkness", bg.scrim, 0f..Background.MAX_SCRIM, "${(bg.scrim * 100).toInt()}%") { setBg(bg.copy(scrim = it)) }
-                        }
-                        if (bg.kind == BackgroundKind.Image) {
-                            MiniSlider("Zoom", bg.zoom, 1f..Background.MAX_ZOOM, "%.2fx".format(bg.zoom)) { setBg(bg.copy(zoom = it)) }
-                            MiniSlider("Left / right", bg.offsetX, -1f..1f, "%+.2f".format(bg.offsetX)) { setBg(bg.copy(offsetX = it)) }
-                            MiniSlider("Up / down", bg.offsetY, -1f..1f, "%+.2f".format(bg.offsetY)) { setBg(bg.copy(offsetY = it)) }
-                        }
-                    }
+                } else {
+                    preview(Modifier.fillMaxWidth().padding(horizontal = Space.l, vertical = Space.s))
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = Space.l, vertical = Space.s)) { options() }
                 }
             }
         }
@@ -155,13 +163,13 @@ fun AppearanceDialog(vm: AppViewModel, profile: Profile, skin: Skin, onChange: (
 @Composable
 private fun TypeCard(type: ControllerType, skin: Skin, bg: Background, image: ImageBitmap?, selected: Boolean, onClick: () -> Unit) {
     Column(
-        Modifier.width(124.dp).clip(RoundedCornerShape(12.dp))
+        Modifier.width(132.dp).clip(RoundedCornerShape(12.dp))
             .border(BorderStroke(if (selected) 2.dp else 1.dp, if (selected) Palette.Accent else Palette.Outline), RoundedCornerShape(12.dp))
             .clickable(onClick = onClick).padding(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         ControllerPreview(type, skin, bg, image, Modifier.fillMaxWidth().height(54.dp).clip(RoundedCornerShape(8.dp)))
-        Text(type.label, fontSize = 13.sp, color = if (selected) Palette.Accent else Palette.Text)
+        Text(type.label, style = MaterialTheme.typography.labelLarge, color = if (selected) Palette.Accent else Palette.Text, modifier = Modifier.padding(start = 2.dp, bottom = 2.dp))
     }
 }
 

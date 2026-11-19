@@ -1,0 +1,182 @@
+<UserControl x:Class="Phone2Gamepad.Windows.Views.HomeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:Phone2Gamepad.Windows.Controls">
+    <ScrollViewer Style="{StaticResource PageScroller}">
+        <Grid x:Name="Layout" MaxWidth="1240" HorizontalAlignment="Stretch">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="MainCol" Width="*"/>
+                <ColumnDefinition x:Name="SideCol" Width="320"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- ============================== hero status -->
+            <Border Grid.Row="0" Grid.ColumnSpan="2" Style="{StaticResource Card}" Padding="20,18">
+                <DockPanel>
+                    <Border DockPanel.Dock="Left" Width="48" Height="48" CornerRadius="24" Margin="0,0,16,0" VerticalAlignment="Center"
+                            Background="{Binding StatusToneKey, Converter={StaticResource ToneBg}}">
+                        <TextBlock Text="{Binding StatusGlyph}" Style="{StaticResource Glyph}" FontSize="22" HorizontalAlignment="Center"
+                                   Foreground="{Binding StatusToneKey, Converter={StaticResource ToneFg}}"/>
+                    </Border>
+                    <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" VerticalAlignment="Center" Margin="16,0,0,0" MinWidth="140"
+                            Content="{Binding Status.ActionText}" Command="{Binding StatusActionCommand}"
+                            Visibility="{Binding HasStatusAction, Converter={StaticResource BoolVis}}"/>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Status.Title}" Style="{StaticResource Subtitle}" AutomationProperties.LiveSetting="Polite" x:Name="StatusTitle"/>
+                        <TextBlock Text="{Binding Status.Detail}" Style="{StaticResource BodySecondary}" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <!-- ============================== left: live controller + metrics -->
+            <StackPanel x:Name="MainPanel" Grid.Row="1" Grid.Column="0" Margin="0,0,12,0">
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,8">
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding InputStateText}" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
+                            <TextBlock Text="Live controller" Style="{StaticResource BodyStrong}"/>
+                        </DockPanel>
+                        <c:ControllerVisual State="{Binding LiveState}" IsLive="{Binding IsLive}" Height="260" Margin="0,4,0,8"
+                                            AutomationProperties.Name="Live view of the virtual controller"/>
+                        <TextBlock Text="{Binding LiveSummary}" Style="{StaticResource Caption}" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+                <UniformGrid Rows="1" Margin="0,0,-8,4" x:Name="Metrics">
+                    <Border Style="{StaticResource Tile}" ToolTip="Round trip between phone and PC, measured from heartbeats.">
+                        <StackPanel><TextBlock Text="Latency" Style="{StaticResource Caption}"/><TextBlock Text="{Binding LatencyText}" Style="{StaticResource MetricValue}"/></StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Tile}" ToolTip="Packets received from the phone each second.">
+                        <StackPanel><TextBlock Text="Packet rate" Style="{StaticResource Caption}"/><TextBlock Text="{Binding RateText}" Style="{StaticResource MetricValue}"/></StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Tile}">
+                        <StackPanel><TextBlock Text="Session" Style="{StaticResource Caption}"/><TextBlock Text="{Binding UptimeText}" Style="{StaticResource MetricValue}"/></StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Tile}" ToolTip="Duplicate or late packets that were safely ignored.">
+                        <StackPanel><TextBlock Text="Dropped" Style="{StaticResource Caption}"/><TextBlock Text="{Binding DroppedText}" Style="{StaticResource MetricValue}"/></StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Tile}" ToolTip="Packets rejected because they failed validation (wrong session, bad signature, wrong size…).">
+                        <StackPanel><TextBlock Text="Rejected" Style="{StaticResource Caption}"/><TextBlock Text="{Binding InvalidText}" Style="{StaticResource MetricValue}"/></StackPanel>
+                    </Border>
+                </UniformGrid>
+            </StackPanel>
+
+            <!-- ============================== right: pairing, setup, network -->
+            <StackPanel x:Name="SidePanel" Grid.Row="1" Grid.Column="1">
+                <!-- setup checklist (hidden once everything is done) -->
+                <Border Style="{StaticResource Card}" Visibility="{Binding SetupComplete, Converter={StaticResource InverseBoolVis}}" x:Name="SetupCard">
+                    <StackPanel>
+                        <TextBlock Text="Get set up" Style="{StaticResource BodyStrong}" Margin="0,0,0,14"/>
+                        <c:ChecklistRow Title="Virtual controller driver" Detail="{Binding DriverText}"
+                                        State="{Binding DriverReady, Converter={StaticResource Checklist}, ConverterParameter=Problem}">
+                            <StackPanel Orientation="Horizontal" Visibility="{Binding DriverReady, Converter={StaticResource InverseBoolVis}}">
+                                <Button Content="How to install" Command="{Binding OpenDriverHelpCommand}" Margin="0,0,8,0"/>
+                                <Button Content="Try again" Style="{StaticResource SubtleButton}" Command="{Binding RetryDriverCommand}"/>
+                            </StackPanel>
+                        </c:ChecklistRow>
+                        <c:ChecklistRow Title="Server" State="{Binding IsServerRunning, Converter={StaticResource Checklist}, ConverterParameter=Pending}">
+                            <c:ChecklistRow.Style>
+                                <Style TargetType="c:ChecklistRow" BasedOn="{StaticResource {x:Type c:ChecklistRow}}">
+                                    <Setter Property="Detail" Value="Off — phones can't find this PC."/>
+                                    <Style.Triggers><DataTrigger Binding="{Binding IsServerRunning}" Value="True"><Setter Property="Detail" Value="On and listening on your local network."/></DataTrigger></Style.Triggers>
+                                </Style>
+                            </c:ChecklistRow.Style>
+                            <Button Content="Start server" Command="{Binding ToggleServerCommand}" HorizontalAlignment="Left"
+                                    Visibility="{Binding IsServerRunning, Converter={StaticResource InverseBoolVis}}"/>
+                        </c:ChecklistRow>
+                        <c:ChecklistRow Title="Firewall" State="{Binding NetworkVerified, Converter={StaticResource Checklist}, ConverterParameter=Info}">
+                            <c:ChecklistRow.Style>
+                                <Style TargetType="c:ChecklistRow" BasedOn="{StaticResource {x:Type c:ChecklistRow}}">
+                                    <Setter Property="Detail" Value="If Windows asks, allow Phone2Gamepad on private networks. The app never changes firewall rules itself."/>
+                                    <Style.Triggers><DataTrigger Binding="{Binding NetworkVerified}" Value="True"><Setter Property="Detail" Value="A phone has reached this PC, so the firewall lets it in."/></DataTrigger></Style.Triggers>
+                                </Style>
+                            </c:ChecklistRow.Style>
+                        </c:ChecklistRow>
+                        <c:ChecklistRow Title="Pair your phone" Margin="0" State="{Binding PhonePaired, Converter={StaticResource Checklist}, ConverterParameter=Pending}">
+                            <c:ChecklistRow.Style>
+                                <Style TargetType="c:ChecklistRow" BasedOn="{StaticResource {x:Type c:ChecklistRow}}">
+                                    <Setter Property="Detail" Value="Install Phone2Gamepad on your Android phone, then use Show PIN above."/>
+                                    <Style.Triggers><DataTrigger Binding="{Binding PhonePaired}" Value="True"><Setter Property="Detail" Value="Paired phones reconnect automatically."/></DataTrigger></Style.Triggers>
+                                </Style>
+                            </c:ChecklistRow.Style>
+                        </c:ChecklistRow>
+                    </StackPanel>
+                </Border>
+
+                <!-- pairing -->
+                <Border Style="{StaticResource Card}" x:Name="PairingCard">
+                    <StackPanel>
+                        <TextBlock Text="Pair a phone" Style="{StaticResource BodyStrong}"/>
+                        <Grid Margin="0,14,0,0" Visibility="{Binding PairingOpen, Converter={StaticResource BoolVis}}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <Grid Width="64" Height="64" Margin="0,0,16,0">
+                                <c:CountdownRing Fraction="{Binding PinFraction}" Thickness="5" Track="{DynamicResource Stroke}" Arc="{DynamicResource Accent}"/>
+                                <TextBlock Text="{Binding PinSecondsText}" Style="{StaticResource Caption}" Foreground="{DynamicResource FgSecondary}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" AutomationProperties.Name="Seconds left"/>
+                            </Grid>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="PIN" Style="{StaticResource Caption}"/>
+                                <TextBlock Text="{Binding PinText}" FontFamily="{StaticResource UiDisplayFont}" FontSize="36" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Fg}" AutomationProperties.Name="{Binding PinForScreenReader}" x:Name="PinBlock"/>
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock Text="{Binding PairingHint}" Style="{StaticResource BodySecondary}" FontSize="13" Margin="0,10,0,0"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                            <Button Command="{Binding OpenPairingCommand}" Margin="0,0,8,0"
+                                    Visibility="{Binding PairingClosed, Converter={StaticResource BoolVis}}">
+                                <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8EA;" Style="{StaticResource Glyph}" FontSize="14" Margin="0,0,8,0"/><TextBlock Text="Show PIN"/></StackPanel>
+                            </Button>
+                            <Button Content="New PIN" Command="{Binding OpenPairingCommand}" Margin="0,0,8,0"
+                                    Visibility="{Binding PairingOpen, Converter={StaticResource BoolVis}}"/>
+                            <Button Content="Stop pairing" Style="{StaticResource SubtleButton}" Command="{Binding ClosePairingCommand}"
+                                    Visibility="{Binding PairingOpen, Converter={StaticResource BoolVis}}"/>
+                        </StackPanel>
+                        <TextBlock Text="QR-code pairing isn't available yet." Style="{StaticResource Caption}" Margin="0,12,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- this PC on the network -->
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="This PC" Style="{StaticResource BodyStrong}" Margin="0,0,0,10"/>
+                        <DockPanel Visibility="{Binding PrimaryAddress, Converter={StaticResource NotEmptyVis}}">
+                            <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE8C8;" VerticalAlignment="Center"
+                                    Command="{Binding CopyCommand}" CommandParameter="{Binding PrimaryAddress.Address}"
+                                    ToolTip="Copy address" AutomationProperties.Name="Copy IP address"/>
+                            <StackPanel>
+                                <TextBlock Text="{Binding PrimaryAddress.Address}" FontFamily="{StaticResource UiDisplayFont}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource Fg}"/>
+                                <TextBlock Style="{StaticResource Caption}"><Run Text="{Binding PrimaryAddress.Adapter, Mode=OneWay}"/><Run Text=" · use this for manual connection"/></TextBlock>
+                            </StackPanel>
+                        </DockPanel>
+                        <TextBlock Style="{StaticResource BodySecondary}" FontSize="13"
+                                   Text="No Wi-Fi or Ethernet address found. Connect this PC to the same network as your phone."
+                                   Visibility="{Binding PrimaryAddress, Converter={StaticResource NotEmptyVis}, ConverterParameter=invert}" x:Name="NoAddress"/>
+                        <TextBlock Text="{Binding PortsText}" Style="{StaticResource Caption}" Margin="0,8,0,0"/>
+                        <ToggleButton x:Name="MoreAddresses" Style="{StaticResource SubtleToggle}" Margin="-6,8,0,0" HorizontalAlignment="Left"
+                                      Visibility="{Binding HasOtherAddresses, Converter={StaticResource BoolVis}}" Content="Other addresses"/>
+                        <ItemsControl ItemsSource="{Binding OtherAddresses}" Margin="0,4,0,0"
+                                      Visibility="{Binding IsChecked, ElementName=MoreAddresses, Converter={StaticResource BoolVis}}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <DockPanel Margin="0,2">
+                                        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE8C8;" Padding="6" FontSize="12"
+                                                Command="{Binding DataContext.CopyCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding Address}"
+                                                ToolTip="Copy" AutomationProperties.Name="{Binding Address, StringFormat=Copy {0}}"/>
+                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource BodySecondary}" FontSize="13">
+                                            <Run Text="{Binding Address, Mode=OneWay}"/><Run Text="  "/><Run Text="{Binding Adapter, Mode=OneWay}" Foreground="{DynamicResource FgTertiary}"/>
+                                        </TextBlock>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="{Binding CopiedNotice}" Style="{StaticResource Caption}" Foreground="{DynamicResource Success}" Margin="0,6,0,0"
+                                   Visibility="{Binding CopiedNotice, Converter={StaticResource NotEmptyVis}}" AutomationProperties.LiveSetting="Polite"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

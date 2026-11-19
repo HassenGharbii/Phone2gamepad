@@ -11,6 +11,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -68,7 +69,10 @@ import com.phone2gamepad.protocol.Dpad
 import com.phone2gamepad.data.ColorSlot
 import com.phone2gamepad.data.ControllerType
 import com.phone2gamepad.data.ProfileBook
+import androidx.compose.material3.OutlinedButton
 import com.phone2gamepad.protocol.ControllerState
+import com.phone2gamepad.protocol.PedalMath
+import com.phone2gamepad.protocol.TiltSteering
 import kotlin.math.min
 
 private fun transportLabel(ctx: Context): String {
@@ -93,7 +97,8 @@ fun GamepadScreen(vm: AppViewModel) {
     val metrics by vm.connection.metrics.collectAsState()
     val view = LocalView.current
     val activity = LocalActivity.current
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycle = lifecycleOwner.lifecycle
     val pad = remember { PadState() }
     var redraw by remember { mutableIntStateOf(0) }
     var generation by remember { mutableIntStateOf(0) }
@@ -101,6 +106,10 @@ fun GamepadScreen(vm: AppViewModel) {
     var menuOpen by remember { mutableStateOf(false) }
     var appearanceOpen by remember { mutableStateOf(false) }
     val bgImage = rememberBackgroundImage(vm, profile.background)
+    val steering = remember { TiltSteering() }
+    var noTiltSensor by remember { mutableStateOf(false) }
+    val pedalBands = remember { IntArray(2) }
+    val tiltActive = profile.controllerType == ControllerType.Racing && profile.tiltEnabled
 
     // Landscape + immersive.
     LandscapeImmersiveEffect()
@@ -144,6 +153,7 @@ fun GamepadScreen(vm: AppViewModel) {
     }
     val live = rememberUpdatedState(settings)
     val liveTuning = rememberUpdatedState(profile.tuning())
+    val liveProfile = rememberUpdatedState(profile)
     val connected = conn is ConnState.Connected
     val measurer = rememberTextMeasurer()
 
@@ -160,6 +170,7 @@ fun GamepadScreen(vm: AppViewModel) {
                 val moved = pad.tick(dt, liveTuning.value)
                 val st = pad.toControllerState()
                 if (moved || st != sent) {
+                    pedalBands[0] = PedalMath.hapticBand(pad.lt); pedalBands[1] = PedalMath.hapticBand(pad.rt)
                     sent = st
                     vm.connection.input.set(st)
                     redraw++
@@ -178,11 +189,52 @@ fun GamepadScreen(vm: AppViewModel) {
                 .padTouch(
                     controls, connected, generation, pad, { liveTuning.value },
                     onButtonDown = { if (live.value.haptics) view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) },
-                    onChanged = { vm.connection.input.set(pad.toControllerState()); redraw++ },
+                    onChanged = {
+                        vm.connection.input.set(pad.toControllerState()); redraw++
+                        // Light tick whenever a pedal crosses a pressure band (racing only: bands stay 0 elsewhere).
+                        if (profile.controllerType == ControllerType.Racing) {
+                            val bl = PedalMath.hapticBand(pad.lt); val br = PedalMath.hapticBand(pad.rt)
+                            if ((bl != pedalBands[0] || br != pedalBands[1]) && live.value.haptics) {
+                                view.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CLOCK_TICK else HapticFeedbackConstants.VIRTUAL_KEY)
+                            }
+                            pedalBands[0] = bl; pedalBands[1] = br
+                        }
+                    },
                 )
         ) {
             redraw // read to subscribe to redraws
-            for (c in controls) drawControlAlpha(c, pad, measurer, skin, 1f, profile.controllerType.domedButtons)
+            for (c in controls) {
+                // The live wheel is its own rotating layer (below); only its fixed shadow/dish is drawn here.
+                if (c.kind == Kind.Wheel) drawWheelUnderlay(c.center(), c.r, skin)
+                else drawControlAlpha(c, pad, measurer, skin, 1f, profile.controllerType.domedButtons)
+            }
+        }
+        for (c in controls) if (c.kind == Kind.Wheel) WheelLayer(c, pad, skin, profile.opacity * c.opacity, profile.wheelShowAngle)
+
+        // Tilt steering: the phone's roll drives the wheel. Registered only while resumed; off unless the profile enables it.
+        TiltSensorEffect(
+            enabled = tiltActive, owner = lifecycleOwner, view = view, steering = steering,
+            lockDeg = { liveProfile.value.wheelLockDeg }, sensitivity = { liveProfile.value.tiltSensitivity },
+            smoothing = { liveProfile.value.tiltSmoothing }, invert = { liveProfile.value.tiltInvert },
+            onWheel = { deg -> pad.setTilt(deg, liveTuning.value) },
+            onNoSensor = { noTiltSensor = true },
+        )
+        DisposableEffect(tiltActive) {
+            if (tiltActive) { noTiltSensor = false; steering.recenter() }
+            onDispose { if (tiltActive) { pad.setTilt(0f, liveTuning.value); steering.reset() } }
+        }
+        if (tiltActive) {
+            Column(Modifier.align(Alignment.TopStart).padding(start = 6.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Box(Modifier.background(Palette.Surface.copy(alpha = 0.88f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                    Text(
+                        if (noTiltSensor) "No tilt sensor on this phone" else "● TILT STEERING ON",
+                        color = if (noTiltSensor) Palette.Warn else skin.col(ColorSlot.Accent), fontSize = 10.sp,
+                    )
+                }
+                OutlinedButton(onClick = { steering.recenter() }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                    Text("Recenter", fontSize = 11.sp)
+                }
+            }
         }
 
         // Status overlay (real values or "---").

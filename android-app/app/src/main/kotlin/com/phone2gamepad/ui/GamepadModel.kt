@@ -1,8 +1,12 @@
 package com.phone2gamepad.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import com.phone2gamepad.data.ControllerType
+import com.phone2gamepad.data.HandbrakeButton
 import com.phone2gamepad.data.Profile
 import com.phone2gamepad.data.TriggerMode
 import com.phone2gamepad.protocol.Buttons
@@ -30,9 +34,34 @@ data class Tuning(
     val stickReturnToCenter: Boolean = true,
     val wheelLockDeg: Float = Profile.WHEEL_DEFAULT_LOCK,
     val wheelSelfCenter: Boolean = true,
+    val wheelDeadZone: Float = 0f,
+    val wheelSensitivity: Float = 1f,
+    val wheelCurve: ResponseCurve = ResponseCurve.Linear,
+    val pedalPressDown: Boolean = true,
+    val pedalFullPress: Boolean = false,
+    val brakeCurve: ResponseCurve = ResponseCurve.Linear,
+    val brakeSensitivity: Float = 1f,
+    /** Released pedals spring back over a few frames (needs the frame ticker; off for static use such as previews). */
+    val pedalEase: Boolean = false,
+    /** Tilt steering owns the wheel: touching the wheel does not steer while it is on. */
+    val tiltEnabled: Boolean = false,
 )
 
-fun Profile.tuning() = Tuning(deadZone, sensitivity, curve, triggerMode == TriggerMode.Digital, stickReturnToCenter, wheelLockDeg, wheelSelfCenter)
+fun Profile.tuning() = Tuning(
+    deadZone, sensitivity, curve, triggerMode == TriggerMode.Digital, stickReturnToCenter, wheelLockDeg, wheelSelfCenter,
+    wheelDeadZone, wheelSensitivity, wheelCurve, pedalPressDown, pedalFullPress || triggerMode == TriggerMode.Digital,
+    brakeCurve, brakeSensitivity, pedalEase = true, tiltEnabled = tiltEnabled,
+)
+
+fun HandbrakeButton.bit(): Int = when (this) {
+    HandbrakeButton.B -> Buttons.B
+    HandbrakeButton.A -> Buttons.A
+    HandbrakeButton.X -> Buttons.X
+    HandbrakeButton.Y -> Buttons.Y
+    HandbrakeButton.RB -> Buttons.RB
+    HandbrakeButton.L3 -> Buttons.L3
+    HandbrakeButton.R3 -> Buttons.R3
+}
 
 /** A touch control. Circular when [rect] is null (radius [r]), otherwise the rectangle l,t,r,b. */
 class Control(
@@ -168,22 +197,27 @@ object GamepadLayout {
 
     fun spec(id: String) = specs.first { it.id == id }
 
-    // ---- Racing: wheel on the left, gas/brake pedals on the right, paddle shifters beside the wheel ----
-    private const val RACE_FACE_X = 0.62f
-    private const val RACE_FACE_Y = 0.73f
+    // ---- Racing: wheel on the left with the paddle shifters flanking its rim, handbrake lever, buttons in the middle, pedals on the right ----
+    private const val WHEEL_X = 0.27f
+    private const val WHEEL_R = 0.36f // of height
+    private const val PADDLE_HW = 0.022f // of width
+    private const val RACE_FACE_X = 0.64f
     private const val RACE_FACE_OFF = 0.095f
 
+    /** Centre x (fraction of width) of a paddle that sits just outside the wheel rim on [side] (-1 left, +1 right). */
+    private fun paddleX(side: Int, w: Float, h: Float) = WHEEL_X + side * (WHEEL_R * h + PADDLE_HW * w + 0.006f * w) / w
+
     val racingSpecs: List<ControlSpec> = listOf(
-        ControlSpec("WHEEL", Kind.Wheel, "", Palette.SurfaceHigh, target = "LS", hitScale = 1.1f, radiusOfHeight = 0.36f, center = fixed(0.27f, 0.56f)),
-        ControlSpec("SHIFT_DOWN", Kind.Button, "\u2212", Palette.SurfaceHigh, Buttons.LB, halfW = 0.035f, halfH = 0.12f, center = fixed(0.06f, 0.52f)),
-        ControlSpec("SHIFT_UP", Kind.Button, "+", Palette.SurfaceHigh, Buttons.RB, halfW = 0.035f, halfH = 0.12f, center = fixed(0.485f, 0.52f)),
-        ControlSpec("DPAD", Kind.Dpad, "", Palette.SurfaceHigh, hitScale = 1.1f, radiusOfHeight = 0.13f, center = fixed(0.585f, 0.43f)),
-        ControlSpec("Y", Kind.Button, "Y", Palette.ButtonY, Buttons.Y, radiusOfHeight = 0.06f, center = fixed(RACE_FACE_X, RACE_FACE_Y - RACE_FACE_OFF)),
-        ControlSpec("A", Kind.Button, "A", Palette.ButtonA, Buttons.A, radiusOfHeight = 0.06f, center = fixed(RACE_FACE_X, RACE_FACE_Y + RACE_FACE_OFF)),
-        ControlSpec("X", Kind.Button, "X", Palette.ButtonX, Buttons.X, radiusOfHeight = 0.06f, center = { w, h -> (RACE_FACE_X - RACE_FACE_OFF * h / w) to RACE_FACE_Y }),
-        ControlSpec("B", Kind.Button, "B", Palette.ButtonB, Buttons.B, radiusOfHeight = 0.06f, center = { w, h -> (RACE_FACE_X + RACE_FACE_OFF * h / w) to RACE_FACE_Y }),
-        ControlSpec("BACK", Kind.Button, "Back", Palette.SurfaceHigh, Buttons.BACK, halfW = 0.035f, halfH = 0.05f, center = fixed(0.55f, 0.21f)),
-        ControlSpec("START", Kind.Button, "Start", Palette.SurfaceHigh, Buttons.START, halfW = 0.035f, halfH = 0.05f, center = fixed(0.62f, 0.21f)),
+        ControlSpec("WHEEL", Kind.Wheel, "", Palette.SurfaceHigh, target = "LS", hitScale = 1.1f, radiusOfHeight = WHEEL_R, center = fixed(WHEEL_X, 0.56f)),
+        ControlSpec("SHIFT_DOWN", Kind.Button, "\u2212", Palette.SurfaceHigh, Buttons.LB, halfW = PADDLE_HW, halfH = 0.15f, center = { w, h -> paddleX(-1, w, h) to 0.56f }),
+        ControlSpec("SHIFT_UP", Kind.Button, "+", Palette.SurfaceHigh, Buttons.RB, halfW = PADDLE_HW, halfH = 0.15f, center = { w, h -> paddleX(1, w, h) to 0.56f }),
+        ControlSpec("HANDBRAKE", Kind.Button, "HANDBRAKE", Palette.SurfaceHigh, Buttons.B, halfW = 0.025f, halfH = 0.16f, center = { w, h -> maxOf(0.525f, paddleX(1, w, h) + PADDLE_HW + 0.025f + 0.004f) to 0.62f }),
+        ControlSpec("DPAD", Kind.Dpad, "", Palette.SurfaceHigh, hitScale = 1.1f, radiusOfHeight = 0.12f, center = fixed(RACE_FACE_X, 0.36f)),
+        ControlSpec("Y", Kind.Button, "CAM", Palette.ButtonY, Buttons.Y, radiusOfHeight = 0.06f, center = fixed(RACE_FACE_X, 0.60f)),
+        ControlSpec("X", Kind.Button, "NITRO", Palette.ButtonX, Buttons.X, radiusOfHeight = 0.06f, center = { w, h -> (RACE_FACE_X - RACE_FACE_OFF * h / w) to 0.76f }),
+        ControlSpec("A", Kind.Button, "A", Palette.ButtonA, Buttons.A, radiusOfHeight = 0.06f, center = { w, h -> (RACE_FACE_X + RACE_FACE_OFF * h / w) to 0.76f }),
+        ControlSpec("BACK", Kind.Button, "Back", Palette.SurfaceHigh, Buttons.BACK, halfW = 0.032f, halfH = 0.05f, center = fixed(0.56f, 0.17f)),
+        ControlSpec("START", Kind.Button, "Start", Palette.SurfaceHigh, Buttons.START, halfW = 0.032f, halfH = 0.05f, center = fixed(0.63f, 0.17f)),
         ControlSpec("BRAKE", Kind.Pedal, "BRAKE", Palette.SurfaceHigh, target = "LT", halfW = 0.05f, halfH = 0.30f, center = fixed(0.775f, 0.62f)),
         ControlSpec("GAS", Kind.Pedal, "GAS", Palette.SurfaceHigh, target = "RT", halfW = 0.065f, halfH = 0.36f, center = fixed(0.91f, 0.58f)),
     )
@@ -230,7 +264,7 @@ object GamepadLayout {
             val hh = s.halfH * h * k
             val (cx, cy) = LayoutMath.clampCentre(fx * w, storedFy * h, hw, hh, w, h)
             Control(
-                s.id, s.kind, cx, cy, 0f, s.bit, s.label, s.color, rect = floatArrayOf(cx - hw, cy - hh, cx + hw, cy + hh),
+                s.id, s.kind, cx, cy, 0f, if (s.id == "HANDBRAKE") profile.handbrake.bit() else s.bit, s.label, s.color, rect = floatArrayOf(cx - hw, cy - hh, cx + hw, cy + hh),
                 hitScale = s.hitScale, opacity = o.opacity, visible = o.visible, target = s.target ?: s.id,
             )
         } else {
@@ -263,11 +297,18 @@ class PadState {
     var lt = 0
     var rt = 0
 
-    /** Steering wheel rotation in degrees (positive = clockwise = steer right) and the finger tracking it. */
-    var wheelRot = 0f
+    /**
+     * Steering wheel rotation in degrees (positive = clockwise = steer right). A snapshot state so the wheel layer can turn
+     * on every change without recomposing anything else.
+     */
+    var wheelRot by mutableFloatStateOf(0f)
         private set
     private var wheelHeld = false
     private var wheelAngle = 0f
+
+    /** A released pedal springs back over a few frames (see [tick]) instead of dropping to 0 at once. */
+    private var ltEasing = false
+    private var rtEasing = false
 
     /** Fighting turbo latch: while on, held attack buttons repeat. Always off after [reset]. */
     var turboOn = false
@@ -275,7 +316,7 @@ class PadState {
     fun reset() {
         buttons = 0; dpad = 0; lKnob = Offset.Zero; rKnob = Offset.Zero
         lAxis = 0f to 0f; rAxis = 0f to 0f; lt = 0; rt = 0
-        wheelRot = 0f; wheelHeld = false; turboOn = false
+        wheelRot = 0f; wheelHeld = false; turboOn = false; ltEasing = false; rtEasing = false
     }
 
     /** State to send at [nowMs]; with turbo on, held repeat buttons pulse. */
@@ -314,11 +355,16 @@ class PadState {
             }
             Kind.Pedal -> {
                 val rc = c.rect!!
-                val v = PedalMath.fromPosition(p.y, rc[1], rc[3] - rc[1], t.digitalTriggers)
-                if (c.target == "LT") lt = v else rt = v
+                val brake = c.target == "LT"
+                val v = PedalMath.value(
+                    p.y, rc[1], rc[3] - rc[1], t.pedalPressDown, t.pedalFullPress,
+                    if (brake) t.brakeCurve else ResponseCurve.Linear, if (brake) t.brakeSensitivity else 1f,
+                )
+                if (brake) { lt = v; ltEasing = false } else { rt = v; rtEasing = false }
             }
             Kind.TriggerButton -> if (c.target == "LT") lt = 255 else rt = 255
             Kind.Wheel -> {
+                if (t.tiltEnabled) return // tilt steering owns the wheel
                 val dx = p.x - c.cx
                 val dy = p.y - c.cy
                 if (hypot(dx, dy) >= c.r * WheelMath.MIN_RADIUS_FRACTION) {
@@ -334,7 +380,13 @@ class PadState {
     }
 
     private fun updateWheelAxis(t: Tuning) {
-        lAxis = WheelMath.axis(wheelRot, t.wheelLockDeg, t.deadZone, t.sensitivity, t.curve) to 0f
+        lAxis = WheelMath.axis(wheelRot, t.wheelLockDeg, t.wheelDeadZone, t.wheelSensitivity, t.wheelCurve) to 0f
+    }
+
+    /** Tilt steering: puts the wheel at [deg] (clamped to the lock range) and updates the left stick X from it. */
+    fun setTilt(deg: Float, t: Tuning) {
+        wheelRot = WheelMath.clampRotation(deg, t.wheelLockDeg)
+        updateWheelAxis(t)
     }
 
     /** Finger lifted from [c]. Sticks return to centre unless the profile latches them. */
@@ -345,17 +397,26 @@ class PadState {
                 if (c.target == "LS") { lKnob = Offset.Zero; lAxis = 0f to 0f } else { rKnob = Offset.Zero; rAxis = 0f to 0f }
             }
             Kind.Dpad -> dpad = 0
-            Kind.Trigger, Kind.Pedal, Kind.TriggerButton -> if (c.target == "LT") lt = 0 else rt = 0
+            Kind.Pedal -> {
+                val brake = c.target == "LT"
+                if (t.pedalEase) { if (brake) ltEasing = lt > 0 else rtEasing = rt > 0 } else if (brake) lt = 0 else rt = 0
+            }
+            Kind.Trigger, Kind.TriggerButton -> if (c.target == "LT") lt = 0 else rt = 0
             Kind.Wheel -> { wheelHeld = false; if (!t.wheelSelfCenter) updateWheelAxis(t) }
             Kind.Toggle -> {}
         }
     }
 
-    /** Per-frame work: springs a released wheel back to centre. Returns true when something changed. */
+    /** Per-frame work: springs a released wheel back to centre and eases released pedals out. Returns true when something changed. */
     fun tick(dtSeconds: Float, t: Tuning): Boolean {
-        if (wheelHeld || !t.wheelSelfCenter || wheelRot == 0f) return false
-        wheelRot = WheelMath.centerStep(wheelRot, dtSeconds, t.wheelLockDeg)
-        updateWheelAxis(t)
-        return true
+        var changed = false
+        if (ltEasing) { lt = PedalMath.easeOut(lt, dtSeconds); if (lt == 0) ltEasing = false; changed = true }
+        if (rtEasing) { rt = PedalMath.easeOut(rt, dtSeconds); if (rt == 0) rtEasing = false; changed = true }
+        if (!t.tiltEnabled && !wheelHeld && t.wheelSelfCenter && wheelRot != 0f) {
+            wheelRot = WheelMath.centerStep(wheelRot, dtSeconds, t.wheelLockDeg)
+            updateWheelAxis(t)
+            changed = true
+        }
+        return changed
     }
 }

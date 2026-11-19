@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.phone2gamepad.AppViewModel
 import com.phone2gamepad.data.ControllerType
+import com.phone2gamepad.data.HandbrakeButton
 import com.phone2gamepad.data.Profile
 import com.phone2gamepad.data.ProfileCodec
 import com.phone2gamepad.data.TriggerMode
@@ -263,13 +264,59 @@ fun TuningScreen(vm: AppViewModel) {
             apply { it.copy(triggerMode = if (on) TriggerMode.Digital else TriggerMode.Analog) }
         }
         if (stored.controllerType == ControllerType.Racing) {
-            SliderRow(
-                "Wheel rotation (lock to lock)", p.wheelLockDeg, Profile.WHEEL_MIN_LOCK..Profile.WHEEL_MAX_LOCK, { "${it.toInt()}°" },
-                { val v = p.wheelLockDeg; vm.editProfile(stored.id) { it.copy(wheelLockDeg = v) } },
-            ) { p = p.copy(wheelLockDeg = it) }
+            SectionTitle("Steering wheel")
+            Text("Wheel rotation (lock to lock)")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (v in Profile.WHEEL_LOCK_CHOICES) FilterChip(
+                    selected = p.wheelLockDeg == v, onClick = { apply { it.copy(wheelLockDeg = v) } }, label = { Text("${v.toInt()}°") },
+                )
+            }
+            Text("A wheel turned half of this range each way gives full steering.", color = Palette.TextDim, style = MaterialTheme.typography.bodySmall)
+            SliderRow("Wheel sensitivity", p.wheelSensitivity, Profile.MIN_SENS..Profile.MAX_SENS, { "%.2fx".format(it) }, { val v = p.wheelSensitivity; vm.editProfile(stored.id) { it.copy(wheelSensitivity = v) } }) {
+                p = p.copy(wheelSensitivity = it)
+            }
+            SliderRow("Wheel centre dead zone", p.wheelDeadZone, 0f..Profile.WHEEL_MAX_DEADZONE, { "${(it * 100).toInt()}%" }, { val v = p.wheelDeadZone; vm.editProfile(stored.id) { it.copy(wheelDeadZone = v) } }) {
+                p = p.copy(wheelDeadZone = it)
+            }
+            Text("Wheel response")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (c in ResponseCurve.entries) FilterChip(selected = p.wheelCurve == c, onClick = { apply { it.copy(wheelCurve = c) } }, label = { Text(c.name) })
+            }
             SwitchRow("Wheel returns to centre", "Off: the wheel stays turned where you let go", p.wheelSelfCenter) { on ->
                 apply { it.copy(wheelSelfCenter = on) }
             }
+            SwitchRow("Show steering angle", "Small read-out of the wheel angle in degrees", p.wheelShowAngle) { on -> apply { it.copy(wheelShowAngle = on) } }
+
+            SectionTitle("Pedals")
+            SwitchRow("Lower = more pressed", "On: slide down the pedal to press it (like the triggers). Off: slide up", p.pedalPressDown) { on ->
+                apply { it.copy(pedalPressDown = on) }
+            }
+            SwitchRow("Full press on touch", "Gas and brake go to 100% as soon as you touch them", p.pedalFullPress) { on -> apply { it.copy(pedalFullPress = on) } }
+            Text("Brake response")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (c in ResponseCurve.entries) FilterChip(selected = p.brakeCurve == c, onClick = { apply { it.copy(brakeCurve = c) } }, label = { Text(c.name) })
+            }
+            SliderRow("Brake sensitivity", p.brakeSensitivity, Profile.MIN_SENS..Profile.MAX_SENS, { "%.2fx".format(it) }, { val v = p.brakeSensitivity; vm.editProfile(stored.id) { it.copy(brakeSensitivity = v) } }) {
+                p = p.copy(brakeSensitivity = it)
+            }
+            Text("Handbrake sends")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (h in HandbrakeButton.entries) FilterChip(selected = p.handbrake == h, onClick = { apply { it.copy(handbrake = h) } }, label = { Text(h.label) })
+            }
+
+            SectionTitle("Tilt steering")
+            SwitchRow("Steer by tilting the phone", "Off by default. Hold the phone like a wheel; the pose when you start is straight ahead. Use Recenter on the pad any time", p.tiltEnabled) { on ->
+                apply { it.copy(tiltEnabled = on) }
+            }
+            SliderRow("Tilt sensitivity", p.tiltSensitivity, Profile.TILT_MIN_SENS..Profile.TILT_MAX_SENS, { "%.2fx".format(it) }, { val v = p.tiltSensitivity; vm.editProfile(stored.id) { it.copy(tiltSensitivity = v) } }) {
+                p = p.copy(tiltSensitivity = it)
+            }
+            SliderRow("Tilt smoothing", p.tiltSmoothing, 0f..Profile.TILT_MAX_SMOOTHING, { "${(it * 100).toInt()}%" }, { val v = p.tiltSmoothing; vm.editProfile(stored.id) { it.copy(tiltSmoothing = v) } }) {
+                p = p.copy(tiltSmoothing = it)
+            }
+            SwitchRow("Invert tilt direction", "Swap left and right", p.tiltInvert) { on -> apply { it.copy(tiltInvert = on) } }
+            Text("45° of tilt gives full steering at 1.00x.", color = Palette.TextDim, style = MaterialTheme.typography.bodySmall)
+            SectionTitle("General")
         }
         SwitchRow("Sticks return to centre", "Off: a stick stays where you released it until you touch it again", p.stickReturnToCenter) { on ->
             apply { it.copy(stickReturnToCenter = on) }
@@ -284,4 +331,9 @@ fun TuningScreen(vm: AppViewModel) {
         ) { p = p.copy(globalScale = it) }
         Button(onClick = { vm.openLayoutEditor(stored.id) }, Modifier.fillMaxWidth()) { Text("Edit layout") }
     }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(text, color = Palette.Accent, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
 }

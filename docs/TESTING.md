@@ -149,3 +149,16 @@ The owner reports the virtual controller works correctly on hardwaretester.com/g
 
 **Not verified:** multi-finger use of the wheel with pedals at the same time (adb cannot send several fingers), the Tuning screen's wheel sliders, a skin applied on the new controller types, whether the Racing paddle shifters and the Fighting LB/LT/Start/Back work on the phone (covered by unit tests only), pinch-resize in the editor, other screen sizes, a real game.
 Test leftovers: the phone's active profile "My layout (2)" was used for the tests and put back to Xbox with no background.
+
+## Racing round 5 (2026-11-19): wheel, pedals, handbrake, tilt
+
+JVM tests: 167 pass (new `RacingTest`: wheel dead zone/sensitivity/curve, lock presets reach +/-32767 at half lock, multi-turn without angle-wrap glitch, finger keeps the wheel off the rim, wheel + pedal + button together, brake curve/sensitivity, full press, spring-back easing, handbrake mapping, tilt maths in both landscape orientations, recenter/smoothing/invert, schema 3 -> 4 migration keeps the old wheel feel, overlap-free layout on 20:9 and 18:9 phones).
+
+Verified on the real phone against the real PC (XInput log):
+- Wheel drag rotates the wheel layer live and read-out (+61 deg mid-swipe); left stick X ramps smoothly and springs back to 0 in about 3 polls. With lock set to 180 a 90-degree swipe reaches 32441 of 32767 (about full scale); the 540 default was restored afterwards.
+- Gas and brake ramp 0 -> ~240 over many distinct values and ease back to 0 in about 4 polls (~0.14 s); pedal plate visibly presses in with gauge and percentage.
+- Handbrake lever tilts and sends B (0x2000); Recenter button resets the tilt wheel to 0 deg.
+- Tuning screen sections (lock chips, sensitivity, dead zone, curves, pedals, handbrake chips, tilt) render and edits persist.
+- No crash lines in logcat.
+
+Not verified: tilt direction and scale (adb cannot tilt the phone; the sensor did drive the wheel and Recenter zeroed it); pedal haptic ticks (cannot feel/measure over adb); multi-finger use of wheel + pedal at once on the phone (unit-tested only); paddle shifters on the phone; the 'lower = more pressed' pedal direction is a change from before (default now like the triggers; switch in Tuning); a real game.

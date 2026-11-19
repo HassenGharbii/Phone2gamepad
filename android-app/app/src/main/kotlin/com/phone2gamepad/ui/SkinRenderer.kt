@@ -126,6 +126,9 @@ internal fun DrawScope.drawControl(c: Control, pad: PadState, m: TextMeasurer, s
     val labelColor = skin.col(ColorSlot.LabelText)
     val pressed = skin.col(ColorSlot.ButtonPressed)
     val box = c.box()
+    // Racing controls have their own (metal) look.
+    if (c.kind == Kind.Button && (c.id == "SHIFT_DOWN" || c.id == "SHIFT_UP")) { drawPaddle(c, (pad.buttons and c.bit) != 0, m, skin); return }
+    if (c.kind == Kind.Button && c.id == "HANDBRAKE") { drawHandbrake(c, (pad.buttons and c.bit) != 0, m, skin); return }
     when (c.kind) {
         Kind.Button -> {
             val on = (pad.buttons and c.bit) != 0
@@ -137,7 +140,9 @@ internal fun DrawScope.drawControl(c: Control, pad: PadState, m: TextMeasurer, s
                 val fill = if (on) face else if (dome) mixColor(face, Color.Black, 0.10f) else idleFill
                 drawSkinShape(if (dome) SkinShape.Circle else skin.faceShape, box, fill, face, ow * 2f)
                 if (dome) drawDome(c.center(), c.r, on)
-                label(m, skin, c.label, c.center(), unit * (if (dome) 0.05f else 0.06f), if (on || dome) readable(fill) else labelColor)
+                // Long names (CAM, NITRO) shrink to stay inside the round button.
+                val faceLabelPx = min(unit * (if (dome) 0.05f else 0.06f), c.r * 1.7f / (0.62f * c.label.length.coerceAtLeast(1)))
+                label(m, skin, c.label, c.center(), faceLabelPx, if (on || dome) readable(fill) else labelColor)
             } else {
                 val idle = skin.col(if (c.id == "LB" || c.id == "RB") ColorSlot.Bumper else ColorSlot.ButtonIdle)
                 val fill = if (on) pressed else idle
@@ -206,46 +211,8 @@ internal fun DrawScope.drawControl(c: Control, pad: PadState, m: TextMeasurer, s
             if (dome) drawDome(c.center(), c.r, on)
             label(m, skin, c.label, c.center(), unit * 0.028f, if (on) readable(accent) else labelColor)
         }
-        Kind.Pedal -> {
-            val v = (if (c.target == "LT") pad.lt else pad.rt) / 255f
-            val tl = Offset(box[0], box[1])
-            val sz = Size(box[2] - box[0], box[3] - box[1])
-            val cr = CornerRadius(min(sz.width, sz.height) * 0.22f)
-            drawRoundRect(skin.col(ColorSlot.Trigger), tl, sz, cr)
-            // Pressed amount fills from the bottom (the pedal hinge).
-            if (v > 0f) clipRect(box[0], box[3] - sz.height * v, box[2], box[3]) { drawRoundRect(pressed, tl, sz, cr) }
-            // Anti-slip ribs.
-            val ribs = 9
-            for (i in 1 until ribs) {
-                val yy = box[1] + sz.height * i / ribs
-                drawLine(Color.Black.copy(alpha = 0.28f), Offset(box[0] + sz.width * 0.14f, yy), Offset(box[2] - sz.width * 0.14f, yy), strokeWidth = ow.coerceAtLeast(2f), cap = StrokeCap.Round)
-            }
-            drawRoundRect(outline, tl, sz, cr, style = Stroke(ow.coerceAtLeast(2f)))
-            label(m, skin, c.label, Offset(c.cx, box[3] - sz.height * 0.07f), unit * 0.03f, if (v > 0.12f) readable(pressed) else labelColor)
-        }
-        Kind.Wheel -> {
-            val ctr = c.center()
-            val rimW = c.r * 0.16f
-            val rimColor = skin.col(ColorSlot.StickKnob)
-            val baseColor = skin.col(ColorSlot.StickBase)
-            drawCircle(baseColor.copy(alpha = 0.55f), c.r, ctr)
-            drawCircle(Color.Black.copy(alpha = 0.35f), c.r * 1.01f, ctr, style = Stroke(c.r * 0.03f))
-            // Everything below turns with the wheel.
-            rotate(pad.wheelRot, ctr) {
-                drawCircle(rimColor, c.r - rimW / 2f, ctr, style = Stroke(rimW))
-                // Hand grip texture on the rim.
-                drawCircle(Color.Black.copy(alpha = 0.28f), c.r - rimW / 2f, ctr, style = Stroke(rimW * 0.55f, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(rimW * 0.5f, rimW * 0.5f))))
-                val spokeW = c.r * 0.13f
-                val inner = c.r - rimW
-                drawLine(rimColor, ctr, ctr + Offset(-inner, 0f), strokeWidth = spokeW, cap = StrokeCap.Round)
-                drawLine(rimColor, ctr, ctr + Offset(inner, 0f), strokeWidth = spokeW, cap = StrokeCap.Round)
-                drawLine(rimColor, ctr, ctr + Offset(0f, inner), strokeWidth = spokeW, cap = StrokeCap.Round)
-                drawCircle(baseColor, c.r * 0.26f, ctr)
-                drawCircle(rimColor, c.r * 0.26f, ctr, style = Stroke(c.r * 0.03f))
-                // Centre mark at 12 o'clock so the turn is visible.
-                drawLine(skin.col(ColorSlot.Accent), ctr + Offset(0f, -c.r + rimW * 0.1f), ctr + Offset(0f, -c.r + rimW * 0.95f), strokeWidth = c.r * 0.045f, cap = StrokeCap.Round)
-            }
-        }
+        Kind.Pedal -> drawPedal(c, (if (c.target == "LT") pad.lt else pad.rt) / 255f, m, skin)
+        Kind.Wheel -> drawWheelStatic(c.center(), c.r, skin, pad.wheelRot)
     }
 }
 

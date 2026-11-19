@@ -1,7 +1,26 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// Optional release signing. Credentials are read from android-app/keystore.properties (git-ignored) or from the
+// P2G_KEYSTORE_FILE / P2G_KEYSTORE_PASSWORD / P2G_KEY_ALIAS / P2G_KEY_PASSWORD environment variables.
+// When any value is missing (or the keystore file does not exist) no signing config is created and the release
+// build stays unsigned; debug builds and unit tests are unaffected. See docs/BUILD.md.
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.isFile) f.inputStream().use { load(it) }
+}
+fun signingValue(propKey: String, envKey: String): String? =
+    (keystoreProps.getProperty(propKey) ?: System.getenv(envKey))?.takeIf { it.isNotBlank() }
+val releaseStoreFile = signingValue("storeFile", "P2G_KEYSTORE_FILE")?.let { rootProject.file(it) }
+val releaseStorePassword = signingValue("storePassword", "P2G_KEYSTORE_PASSWORD")
+val releaseKeyAlias = signingValue("keyAlias", "P2G_KEY_ALIAS")
+val releaseKeyPassword = signingValue("keyPassword", "P2G_KEY_PASSWORD")
+val hasReleaseSigning = releaseStoreFile?.isFile == true &&
+    releaseStorePassword != null && releaseKeyAlias != null && releaseKeyPassword != null
 
 android {
     namespace = "com.phone2gamepad"
@@ -15,9 +34,20 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

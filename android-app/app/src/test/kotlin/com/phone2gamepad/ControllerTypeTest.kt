@@ -1,4 +1,4 @@
-package com.phone2gamepad
+﻿package com.phone2gamepad
 
 import androidx.compose.ui.geometry.Offset
 import com.phone2gamepad.data.Background
@@ -88,9 +88,9 @@ class ControllerTypeTest {
         val pad = PadState()
         val gas = c.getValue("GAS")
         val gb = gas.box()
-        press(pad, gas, Offset(gas.cx, gb[1] + 1f))       // top of the pedal = flat out
+        press(pad, gas, Offset(gas.cx, gb[3] - 1f))       // bottom of the pedal = flat out (lower = more pressed)
         assertEquals(255, pad.toControllerState().rt)
-        pad.apply(gas, Offset(gas.cx, gb[3]), t)           // bottom = released
+        pad.apply(gas, Offset(gas.cx, gb[1]), t)           // top = released
         assertEquals(0, pad.toControllerState().rt)
         pad.apply(gas, Offset(gas.cx, (gb[1] + gb[3]) / 2f), t)
         assertTrue(kotlin.math.abs(pad.toControllerState().rt - 128) <= 1)
@@ -98,7 +98,7 @@ class ControllerTypeTest {
         assertEquals(0, pad.toControllerState().rt)
 
         val brake = c.getValue("BRAKE")
-        press(pad, brake, Offset(brake.cx, brake.box()[1] + 1f))
+        press(pad, brake, Offset(brake.cx, brake.box()[3] - 1f))
         assertEquals(255, pad.toControllerState().lt)
         assertEquals(0, pad.toControllerState().rt)
         pad.release(brake, t)
@@ -110,13 +110,14 @@ class ControllerTypeTest {
     }
 
     @Test fun pedalRangesAndDigitalMode() {
-        assertEquals(255, PedalMath.fromPosition(100f, 100f, 400f, false))
-        assertEquals(0, PedalMath.fromPosition(500f, 100f, 400f, false))
-        assertEquals(128, PedalMath.fromPosition(300f, 100f, 400f, false))
-        assertEquals(255, PedalMath.fromPosition(10f, 100f, 400f, false))   // above the pedal: clamped
-        assertEquals(0, PedalMath.fromPosition(900f, 100f, 400f, false))    // below the pedal: clamped
-        assertEquals(255, PedalMath.fromPosition(480f, 100f, 400f, true))   // digital: any touch is a full press
-        assertEquals(0, PedalMath.fromPosition(1f, 100f, 0f, false))
+        assertEquals(0, PedalMath.value(100f, 100f, 400f))                      // top edge = released
+        assertEquals(255, PedalMath.value(500f, 100f, 400f))                    // bottom edge = full
+        assertEquals(128, PedalMath.value(300f, 100f, 400f))
+        assertEquals(0, PedalMath.value(10f, 100f, 400f))                       // above the pedal: clamped
+        assertEquals(255, PedalMath.value(900f, 100f, 400f))                    // below the pedal: clamped
+        assertEquals(255, PedalMath.value(110f, 100f, 400f, fullPress = true))  // full press on touch
+        assertEquals(0, PedalMath.value(1f, 100f, 0f))
+        assertEquals(255, PedalMath.value(100f, 100f, 400f, pressDown = false)) // reversed direction: up = more
     }
 
     @Test fun wheelAngleDeltaWrapsTheShortWay() {
@@ -336,7 +337,7 @@ class ControllerTypeTest {
         assertEquals("tactical", p.skinId)
         assertTrue(p.leftHanded)
         assertEquals(0.4f, p.override("A").fx)
-        assertEquals(3, ProfileCodec.SCHEMA)
+        assertEquals(4, ProfileCodec.SCHEMA)
         // v1 files still upgrade all the way.
         val v1 = ProfileCodec.decodeBook("""{"schema":1,"profiles":[{"id":"a","name":"old"}]}""") as BookResult.Ok
         assertEquals(ControllerType.Xbox, v1.book.active.controllerType)

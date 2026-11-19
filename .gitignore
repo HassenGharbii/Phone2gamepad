@@ -8,3 +8,8 @@ android-app/app/build/
 local.properties
 *.jks
 *.keystore
+dist/
+keystore.properties
+android-app/keystore.properties
+*.p12
+android-app/.kotlin/

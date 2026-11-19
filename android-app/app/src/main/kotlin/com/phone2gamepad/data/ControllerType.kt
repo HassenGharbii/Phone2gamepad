@@ -13,8 +13,8 @@ enum class ControllerType(val id: String, val label: String, val description: St
         listOf("LT", "LB", "RT", "RB", "LS", "DPAD", "RS", "Y", "A", "X", "B", "BACK", "START", "L3", "R3"),
     ),
     Racing(
-        "racing", "Racing", "Touch steering wheel, gas and brake pedals, paddle shifters.",
-        listOf("WHEEL", "SHIFT_DOWN", "SHIFT_UP", "BRAKE", "GAS", "DPAD", "Y", "A", "X", "B", "BACK", "START"),
+        "racing", "Racing", "Steering wheel (touch or tilt), gas and brake pedals, paddle shifters and a handbrake.",
+        listOf("WHEEL", "SHIFT_DOWN", "SHIFT_UP", "BRAKE", "GAS", "HANDBRAKE", "DPAD", "Y", "X", "A", "BACK", "START"),
     ),
     Fighting(
         "fighting", "Fighting", "Big 8-way D-pad and six attack buttons, with an optional turbo toggle.",

@@ -18,8 +18,11 @@ Legend: ✅ built and tested · 🟡 built, partially verified · ⬜ not starte
 - ⬜ Online skin catalog / marketplace (deliberately not built: needs an opt-in, review and moderation design first)
 - ⬜ Online skin catalog (opt-in; needs a separate privacy/security decision — skins are shared as `.p2gskin` files for now)
 - ⬜ QR pairing
-- ⬜ Installer, release signing, clean-machine test, long-run stability test, real-game test
+- 🟡 Packaging: portable zips (self-contained ~65 MB / framework-dependent ~0.6 MB) built by `scripts/publish-windows.ps1` and the published exe launch-tested; Inno Setup script written but **not compiled**; Android release signing wired (config verified, real release build + apksigner not run, no release key yet); GitHub Actions CI written, **not yet run on GitHub**
+- ⬜ Clean-machine install test, long-run stability test, real-game test
 - ⬜ Advanced: gyro, turbo, macros, USB transport, multi-phone, PC→phone vibration, more controller types (e.g. flight stick)
 
 ## Known limits
 UDP input is authenticated, not encrypted. ViGEmBus is retired upstream. Tested only on one phone (Android 14) and one PC.
+
+- Racing controller round 5: realistic wheel (grip texture, stitching, spokes, hub, GPU-rotated), metal pedals with travel animation and gauge, curved paddle shifters, handbrake lever, optional tilt steering (off by default), full Tuning section (167 JVM tests; checked on a real phone except tilt direction/scale, haptics and multi-finger use).

@@ -6,4 +6,9 @@
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
   </PropertyGroup>
+  <!-- Single source of truth for the app version: <repo>/VERSION (used by publish-windows.ps1 and the installer). -->
+  <PropertyGroup>
+    <P2GVersionFile>$(MSBuildThisFileDirectory)..\VERSION</P2GVersionFile>
+    <Version Condition="Exists('$(P2GVersionFile)')">$([System.IO.File]::ReadAllText('$(P2GVersionFile)').Trim())</Version>
+  </PropertyGroup>
 </Project>

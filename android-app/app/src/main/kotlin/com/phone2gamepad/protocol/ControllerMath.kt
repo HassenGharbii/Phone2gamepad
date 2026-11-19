@@ -54,14 +54,102 @@ object WheelMath {
     }
 }
 
-/** Pedal maths: pushing the finger forward (towards the top of the pedal) presses it further. */
+/** Pedal maths: the finger's position along the pedal decides how far it is pressed (like a real pedal, lower = more by default). */
 object PedalMath {
-    /** 0..255 for a finger at [y] on a pedal spanning [top]..[top]+[height]; the bottom edge is 0 and the top edge is full. */
-    fun fromPosition(y: Float, top: Float, height: Float, digital: Boolean): Int {
-        if (height <= 0f) return 0
-        if (digital) return 255
-        return InputMath.toTrigger((top + height - y) / height)
+    /** Time a released pedal takes to spring back from full travel. */
+    const val RETURN_SECONDS = 0.14f
+
+    /** Pedal travel 0..1 for a finger at [y] on a pedal spanning [top]..[top]+[height]. */
+    fun fraction(y: Float, top: Float, height: Float, pressDown: Boolean): Float {
+        if (height <= 0f) return 0f
+        val f = ((y - top) / height).coerceIn(0f, 1f)
+        return if (pressDown) f else 1f - f
     }
+
+    /**
+     * Trigger byte 0..255: [fullPress] sends 255 on any touch; otherwise the travel is shaped by [curve] and [sensitivity]
+     * (a gain: 2 reaches full output at half travel; clamped like the stick sensitivity).
+     */
+    fun value(
+        y: Float, top: Float, height: Float, pressDown: Boolean = true, fullPress: Boolean = false,
+        curve: ResponseCurve = ResponseCurve.Linear, sensitivity: Float = 1f,
+    ): Int {
+        if (height <= 0f) return 0
+        if (fullPress) return 255
+        val shaped = curve.apply(fraction(y, top, height, pressDown)) * sensitivity.coerceIn(0.1f, 4f)
+        return InputMath.toTrigger(shaped)
+    }
+
+    /** One spring-back step for a released pedal: [current] falls to 0 so that full travel takes [RETURN_SECONDS]. */
+    fun easeOut(current: Int, dtSeconds: Float): Int {
+        val step = (255f * dtSeconds.coerceAtLeast(0f) / RETURN_SECONDS).toInt().coerceAtLeast(1)
+        return (current - step).coerceAtLeast(0)
+    }
+
+    /** Coarse pressure band 0..4 used for light haptic ticks: a tick fires whenever the band changes. */
+    fun hapticBand(value: Int): Int = (value.coerceIn(0, 255) * 4 + 127) / 255
+}
+
+/**
+ * Tilt (gravity sensor) steering. The phone is held in landscape like a wheel; the angle of the gravity vector inside
+ * the screen plane is the roll. [rollDeg] is positive when the phone is turned clockwise as seen on the screen.
+ */
+object TiltMath {
+    /** Roll angle that gives full lock at sensitivity 1. */
+    const val FULL_LOCK_TILT_DEG = 45f
+
+    /** Gravity in the screen plane below this (m/s^2) means the phone is lying flat: the roll is meaningless. */
+    const val MIN_PLANE_G = 2.5f
+
+    /**
+     * Roll in degrees from the accelerometer/gravity reading ([ax],[ay] in device axes, m/s^2) and the display rotation
+     * (0, 1, 2, 3 = Surface.ROTATION_0/90/180/270), or null while the phone is flat.
+     */
+    fun rollDeg(ax: Float, ay: Float, displayRotation: Int): Float? {
+        val (gx, gy) = when (((displayRotation % 4) + 4) % 4) {
+            1 -> ay to -ax
+            2 -> -ax to -ay
+            3 -> -ay to ax
+            else -> ax to ay
+        }
+        if (kotlin.math.hypot(gx, gy) < MIN_PLANE_G) return null
+        return Math.toDegrees(atan2(-gx, gy).toDouble()).toFloat()
+    }
+}
+
+/** Turns successive roll readings into a wheel rotation in degrees (low-pass smoothed, recentrable). Not thread-safe. */
+class TiltSteering {
+    private var offset = 0f
+    private var hasOffset = false
+    private var smoothed = 0f
+    private var lastRoll = 0f
+    var wheelDeg = 0f
+        private set
+
+    /** Treat the current pose as straight ahead. */
+    fun recenter() { hasOffset = false; smoothed = 0f; wheelDeg = 0f }
+
+    fun reset() { recenter() }
+
+    /**
+     * Feeds a new [roll] (from [TiltMath.rollDeg]; null = unusable, the wheel holds its angle) and returns the wheel rotation
+     * for a lock-to-lock range of [lockDeg]. [smoothing] 0..0.9 is the low-pass strength; [invert] flips the direction.
+     */
+    fun update(roll: Float?, lockDeg: Float, sensitivity: Float, smoothing: Float, invert: Boolean): Float {
+        if (roll == null) return wheelDeg
+        lastRoll = roll
+        if (!hasOffset) { offset = roll; hasOffset = true; smoothed = 0f }
+        val rel = WheelMath.deltaDeg(offset, roll)
+        val a = 1f - smoothing.coerceIn(0f, TILT_MAX_SMOOTHING)
+        smoothed += (rel - smoothed) * a
+        val half = lockDeg.coerceIn(0f, 3600f) / 2f
+        val gain = sensitivity.coerceIn(0.1f, 6f) * half / TiltMath.FULL_LOCK_TILT_DEG
+        val v = (smoothed * gain * (if (invert) -1f else 1f)).coerceIn(-half, half)
+        wheelDeg = v
+        return v
+    }
+
+    private companion object { const val TILT_MAX_SMOOTHING = 0.95f }
 }
 
 /** Fighting-pad turbo: while on, a held attack button is pressed and released repeatedly. */

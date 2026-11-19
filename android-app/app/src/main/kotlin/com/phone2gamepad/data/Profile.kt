@@ -7,6 +7,9 @@ import java.util.UUID
 
 enum class TriggerMode { Analog, Digital }
 
+/** Which Xbox input the racing layout's handbrake lever sends (B by default). */
+enum class HandbrakeButton(val label: String) { B("B"), A("A"), X("X"), Y("Y"), RB("RB"), L3("L3"), R3("R3") }
+
 /** Ids of the touch controls a layout can position (kept in sync with the default layout in the UI package). */
 object ControlIds {
     /** The Xbox layout's controls (other controller types list theirs in [ControllerType.controlIds]). */
@@ -62,11 +65,35 @@ data class Profile(
     /** Steering wheel (Racing): full lock-to-lock rotation in degrees, and whether it springs back when released. */
     val wheelLockDeg: Float = WHEEL_DEFAULT_LOCK,
     val wheelSelfCenter: Boolean = true,
+    /** Racing wheel response: centre dead zone, sensitivity (output multiplier), curve, and the small angle read-out. */
+    val wheelDeadZone: Float = WHEEL_DEFAULT_DEADZONE,
+    val wheelSensitivity: Float = 1f,
+    val wheelCurve: ResponseCurve = ResponseCurve.Linear,
+    val wheelShowAngle: Boolean = true,
+    /** Racing pedals: brake response curve/sensitivity, "full press on touch", and whether lower on the pedal presses more. */
+    val brakeCurve: ResponseCurve = ResponseCurve.Linear,
+    val brakeSensitivity: Float = 1f,
+    val pedalFullPress: Boolean = false,
+    val pedalPressDown: Boolean = true,
+    val handbrake: HandbrakeButton = HandbrakeButton.B,
+    /** Optional tilt (gravity sensor) steering for the racing wheel; always off until the user turns it on. */
+    val tiltEnabled: Boolean = false,
+    val tiltSensitivity: Float = 1f,
+    val tiltSmoothing: Float = TILT_DEFAULT_SMOOTHING,
+    val tiltInvert: Boolean = false,
 ) {
     companion object {
         const val WHEEL_MIN_LOCK = 180f
         const val WHEEL_MAX_LOCK = 900f
         const val WHEEL_DEFAULT_LOCK = 540f
+        const val WHEEL_DEFAULT_DEADZONE = 0.02f
+        const val WHEEL_MAX_DEADZONE = 0.3f
+        const val TILT_MIN_SENS = 0.5f
+        const val TILT_MAX_SENS = 3f
+        const val TILT_MAX_SMOOTHING = 0.9f
+        const val TILT_DEFAULT_SMOOTHING = 0.5f
+        /** Lock-to-lock rotations offered as one-tap choices in Tuning. */
+        val WHEEL_LOCK_CHOICES = listOf(180f, 270f, 360f, 540f, 720f, 900f)
         const val MIN_SCALE = 0.5f
         const val MAX_SCALE = 2f
         const val MIN_GLOBAL_SCALE = 0.6f
@@ -103,7 +130,14 @@ data class Profile(
         skinId = skinId.take(Skin.MAX_ID).ifBlank { Skins.CLASSIC_ID },
         background = background.sanitized(),
         wheelLockDeg = if (wheelLockDeg.isNaN()) WHEEL_DEFAULT_LOCK else wheelLockDeg.coerceIn(WHEEL_MIN_LOCK, WHEEL_MAX_LOCK),
+        wheelDeadZone = fin(wheelDeadZone, WHEEL_DEFAULT_DEADZONE).coerceIn(0f, WHEEL_MAX_DEADZONE),
+        wheelSensitivity = fin(wheelSensitivity, 1f).coerceIn(MIN_SENS, MAX_SENS),
+        brakeSensitivity = fin(brakeSensitivity, 1f).coerceIn(MIN_SENS, MAX_SENS),
+        tiltSensitivity = fin(tiltSensitivity, 1f).coerceIn(TILT_MIN_SENS, TILT_MAX_SENS),
+        tiltSmoothing = fin(tiltSmoothing, TILT_DEFAULT_SMOOTHING).coerceIn(0f, TILT_MAX_SMOOTHING),
     )
+
+    private fun fin(v: Float, def: Float) = if (v.isNaN() || v.isInfinite()) def else v
 }
 
 /**
@@ -237,7 +271,7 @@ class ProfileBook private constructor(val profiles: List<Profile>, val activeId:
 
 /** JSON (de)serialisation with schema versioning, lenient clamping and corruption detection. */
 object ProfileCodec {
-    const val SCHEMA = 3
+    const val SCHEMA = 4
     private const val EXPORT_TYPE = "phone2gamepad-profile"
     const val MAX_IMPORT_BYTES = 256 * 1024
 
@@ -245,6 +279,8 @@ object ProfileCodec {
      * Migrations keyed by the schema version they upgrade *from* (to version + 1).
      * v1 -> v2: profiles gained a skin; existing ones keep the look they had (Classic).
      * v2 -> v3: profiles gained a controller type and a background; existing ones stay Xbox with no background.
+     * v3 -> v4: the racing wheel got its own dead zone / sensitivity / curve (the wheel used the stick values until now, so
+     * existing profiles copy those and steer exactly as before); pedal, handbrake and tilt settings take their defaults.
      */
     val MIGRATIONS: Map<Int, (JSONObject) -> JSONObject> = mapOf(
         1 to { root ->
@@ -261,6 +297,17 @@ object ProfileCodec {
                 for (i in 0 until arr.length()) {
                     val p = arr.optJSONObject(i) ?: continue
                     if (!p.has("type")) p.put("type", ControllerType.Xbox.id)
+                }
+            }
+            root
+        },
+        3 to { root ->
+            root.optJSONArray("profiles")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val p = arr.optJSONObject(i) ?: continue
+                    if (!p.has("wheelDeadZone") && p.has("deadZone")) p.put("wheelDeadZone", p.get("deadZone"))
+                    if (!p.has("wheelSensitivity") && p.has("sensitivity")) p.put("wheelSensitivity", p.get("sensitivity"))
+                    if (!p.has("wheelCurve") && p.has("curve")) p.put("wheelCurve", p.get("curve"))
                 }
             }
             root
@@ -295,6 +342,13 @@ object ProfileCodec {
             .put("skin", p.skinId)
             .put("type", p.controllerType.id)
             .put("wheelLock", p.wheelLockDeg.toDouble()).put("wheelSelfCenter", p.wheelSelfCenter)
+            .put("wheelDeadZone", p.wheelDeadZone.toDouble()).put("wheelSensitivity", p.wheelSensitivity.toDouble())
+            .put("wheelCurve", p.wheelCurve.name).put("wheelShowAngle", p.wheelShowAngle)
+            .put("brakeCurve", p.brakeCurve.name).put("brakeSensitivity", p.brakeSensitivity.toDouble())
+            .put("pedalFullPress", p.pedalFullPress).put("pedalPressDown", p.pedalPressDown)
+            .put("handbrake", p.handbrake.name)
+            .put("tilt", p.tiltEnabled).put("tiltSensitivity", p.tiltSensitivity.toDouble())
+            .put("tiltSmoothing", p.tiltSmoothing.toDouble()).put("tiltInvert", p.tiltInvert)
             .put("background", encodeBackground(p.background))
             .put("controls", controls)
     }
@@ -357,6 +411,19 @@ object ProfileCodec {
             background = decodeBackground(o.optJSONObject("background")),
             wheelLockDeg = o.float("wheelLock", d.wheelLockDeg),
             wheelSelfCenter = o.optBoolean("wheelSelfCenter", d.wheelSelfCenter),
+            wheelDeadZone = o.float("wheelDeadZone", d.wheelDeadZone),
+            wheelSensitivity = o.float("wheelSensitivity", d.wheelSensitivity),
+            wheelCurve = o.enum("wheelCurve", d.wheelCurve),
+            wheelShowAngle = o.optBoolean("wheelShowAngle", d.wheelShowAngle),
+            brakeCurve = o.enum("brakeCurve", d.brakeCurve),
+            brakeSensitivity = o.float("brakeSensitivity", d.brakeSensitivity),
+            pedalFullPress = o.optBoolean("pedalFullPress", d.pedalFullPress),
+            pedalPressDown = o.optBoolean("pedalPressDown", d.pedalPressDown),
+            handbrake = o.enum("handbrake", d.handbrake),
+            tiltEnabled = o.optBoolean("tilt", d.tiltEnabled),
+            tiltSensitivity = o.float("tiltSensitivity", d.tiltSensitivity),
+            tiltSmoothing = o.float("tiltSmoothing", d.tiltSmoothing),
+            tiltInvert = o.optBoolean("tiltInvert", d.tiltInvert),
         ).sanitized()
     }
 

@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.phone2gamepad.data.BackgroundStore
+import com.phone2gamepad.data.ControllerType
 import com.phone2gamepad.data.Profile
 import com.phone2gamepad.data.ProfileBook
 import com.phone2gamepad.data.Settings
@@ -16,7 +18,12 @@ import com.phone2gamepad.net.ConnState
 import com.phone2gamepad.net.DiscoveredPc
 import com.phone2gamepad.net.DiscoveryClient
 import com.phone2gamepad.net.PcTarget
+import android.graphics.Bitmap
+import android.net.Uri
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +40,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = application.settingsRepo
     private val profileRepo = application.profileRepo
     private val skinRepo = application.skinRepo
+    private val backgroundStore = application.backgroundStore
 
     val settings: StateFlow<Settings> = repo.settings.stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
 
@@ -50,6 +58,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch { profileRepo.recoverIfCorrupt() }
         viewModelScope.launch { skinRepo.recoverIfCorrupt() }
+        // Pictures no profile uses any more (and not picked recently) are deleted once per start.
+        viewModelScope.launch(Dispatchers.IO) {
+            val keep = profileRepo.book.first().profiles.mapNotNull { it.background.imageRef }.toSet()
+            backgroundStore.prune(keep)
+        }
     }
 
     var screen by mutableStateOf(Screen.Welcome)
@@ -198,6 +211,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             profileRepo.update { it.clearSkin(id) }
         }
     }
+
+    // ---- controller type and background ----
+
+    /** Switches the controller type of profile [id]; every control is released first so nothing stays pressed. */
+    fun setProfileType(id: String, type: ControllerType) {
+        connection.input.releaseAll()
+        editProfile(id) { it.copy(controllerType = type) }
+    }
+
+    /** Stores the picture at [uri] as a background; [onDone] gets the new file reference or an error message. */
+    fun importBackground(uri: Uri, onDone: (ref: String?, error: String?) -> Unit) {
+        viewModelScope.launch {
+            when (val r = withContext(Dispatchers.IO) { backgroundStore.importImage(uri) }) {
+                is BackgroundStore.Result.Ok -> onDone(r.ref, null)
+                is BackgroundStore.Result.Rejected -> onDone(null, r.message)
+            }
+        }
+    }
+
+    /** Loads a stored background picture (off the main thread). */
+    suspend fun loadBackground(ref: String): Bitmap? = withContext(Dispatchers.IO) { backgroundStore.load(ref) }
 
     fun dismissSkinBackupNotice() { viewModelScope.launch { skinRepo.dismissBackupNotice() } }
 

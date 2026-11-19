@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.phone2gamepad.AppViewModel
+import com.phone2gamepad.data.ControllerType
 import com.phone2gamepad.data.Profile
 import com.phone2gamepad.data.ProfileCodec
 import com.phone2gamepad.data.TriggerMode
@@ -47,7 +48,7 @@ private fun summary(p: Profile, skinName: String): String {
     val hand = if (p.leftHanded) " · left-handed" else ""
     val n = p.controls.size
     val custom = if (n == 0) "default layout" else "$n customised control${if (n == 1) "" else "s"}"
-    return "$custom · $skinName skin · dead zone ${(p.deadZone * 100).toInt()}% · sensitivity ${"%.2f".format(p.sensitivity)}x · " +
+    return "${p.controllerType.label} controller · $custom · $skinName skin · dead zone ${(p.deadZone * 100).toInt()}% · sensitivity ${"%.2f".format(p.sensitivity)}x · " +
         "${p.curve.name.lowercase()} curve · $trig$hand"
 }
 
@@ -92,6 +93,7 @@ fun ProfilesScreen(vm: AppViewModel) {
     var deleting by remember { mutableStateOf<Profile?>(null) }
     var resetting by remember { mutableStateOf<Profile?>(null) }
     var exporting by remember { mutableStateOf<Profile?>(null) }
+    var appearanceFor by remember { mutableStateOf<String?>(null) }
 
     // Storage Access Framework: no storage permission needed, the user picks the file.
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -166,6 +168,7 @@ fun ProfilesScreen(vm: AppViewModel) {
                         Box {
                             OutlinedButton(onClick = { menu = true }) { Text("More") }
                             DropdownMenu(menu, { menu = false }) {
+                                DropdownMenuItem(text = { Text("Controller & background…") }, onClick = { menu = false; appearanceFor = p.id })
                                 DropdownMenuItem(text = { Text("Skin…") }, onClick = { menu = false; vm.openSkins(p.id) })
                                 DropdownMenuItem(text = { Text("Tuning…") }, onClick = { menu = false; vm.openTuning(p.id) })
                                 DropdownMenuItem(text = { Text("Rename…") }, onClick = { menu = false; renaming = p })
@@ -193,6 +196,15 @@ fun ProfilesScreen(vm: AppViewModel) {
                 Modifier.weight(1f),
             ) { Text("Import…") }
         }
+    }
+
+    appearanceFor?.let { id ->
+        val p = book.profiles.firstOrNull { it.id == id }
+        if (p == null) appearanceFor = null else AppearanceDialog(
+            vm, p, library.resolve(p.skinId),
+            onChange = { np -> vm.editProfile(id) { it.copy(controllerType = np.controllerType, background = np.background) } },
+            onClose = { appearanceFor = null },
+        )
     }
 
     if (creating) NameDialog("New profile", "My layout", "Create", { creating = false }) { vm.createProfile(it); creating = false }
@@ -249,6 +261,15 @@ fun TuningScreen(vm: AppViewModel) {
         )
         SwitchRow("Digital triggers", "LT/RT send a full press on touch instead of analog position", p.triggerMode == TriggerMode.Digital) { on ->
             apply { it.copy(triggerMode = if (on) TriggerMode.Digital else TriggerMode.Analog) }
+        }
+        if (stored.controllerType == ControllerType.Racing) {
+            SliderRow(
+                "Wheel rotation (lock to lock)", p.wheelLockDeg, Profile.WHEEL_MIN_LOCK..Profile.WHEEL_MAX_LOCK, { "${it.toInt()}°" },
+                { val v = p.wheelLockDeg; vm.editProfile(stored.id) { it.copy(wheelLockDeg = v) } },
+            ) { p = p.copy(wheelLockDeg = it) }
+            SwitchRow("Wheel returns to centre", "Off: the wheel stays turned where you let go", p.wheelSelfCenter) { on ->
+                apply { it.copy(wheelSelfCenter = on) }
+            }
         }
         SwitchRow("Sticks return to centre", "Off: a stick stays where you released it until you touch it again", p.stickReturnToCenter) { on ->
             apply { it.copy(stickReturnToCenter = on) }

@@ -57,3 +57,6 @@ Networking and UI never see the driver: they talk to `IVirtualGamepad`. Replacin
 * One phone, one controller (the session manager returns `busy` to a second device).
 * IPv4 only. USB transport, QR pairing, vibration feedback are not implemented.
 * The ViGEmBus driver is a required, separately installed dependency (this app never installs drivers).
+
+## Android controller types (round 4)
+`ControllerType` (Xbox / Racing / Fighting) is stored per `Profile` together with a `Background` (none, built-in vector art, or a private picture). A type only decides which on-screen controls exist (`GamepadLayout.specsFor`), how they are drawn (`ControllerBody.kt` shell + `SkinRenderer.kt` controls) and how touches become the usual Xbox state in `PadState`; the wire protocol is unchanged. Layout overrides are namespaced per type (`racing.GAS`), so switching types never mixes positions. Pure maths (steering wheel, pedals, turbo) lives in `protocol/ControllerMath.kt`. Pictures are decoded with `ImageDecoder` (EXIF applied, size-capped), re-encoded as JPEG into app-private storage under a random name (`BackgroundStore`), and are never exported with profiles or skins.

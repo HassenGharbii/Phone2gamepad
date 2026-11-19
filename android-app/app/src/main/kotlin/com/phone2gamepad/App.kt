@@ -2,6 +2,7 @@ package com.phone2gamepad
 
 import android.app.Application
 import android.os.Build
+import com.phone2gamepad.data.BackgroundStore
 import com.phone2gamepad.data.KeystoreSecretStore
 import com.phone2gamepad.data.ProfileRepository
 import com.phone2gamepad.data.SettingsRepository
@@ -20,6 +21,8 @@ class App : Application() {
         private set
     lateinit var skinRepo: SkinRepository
         private set
+    lateinit var backgroundStore: BackgroundStore
+        private set
     lateinit var connection: ConnectionManager
         private set
 
@@ -28,6 +31,7 @@ class App : Application() {
         settingsRepo = SettingsRepository(this)
         profileRepo = ProfileRepository(this)
         skinRepo = SkinRepository(this)
+        backgroundStore = BackgroundStore(this)
         val name = listOfNotNull(Build.MANUFACTURER?.replaceFirstChar { it.uppercase() }, Build.MODEL).joinToString(" ").ifBlank { "Android phone" }
         connection = ConnectionManager(appScope, KeystoreSecretStore(this), name)
     }

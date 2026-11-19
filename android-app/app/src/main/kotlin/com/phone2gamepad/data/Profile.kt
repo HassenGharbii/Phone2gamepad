@@ -9,7 +9,8 @@ enum class TriggerMode { Analog, Digital }
 
 /** Ids of the touch controls a layout can position (kept in sync with the default layout in the UI package). */
 object ControlIds {
-    val ALL = listOf("LT", "LB", "RT", "RB", "LS", "DPAD", "RS", "Y", "A", "X", "B", "BACK", "START", "L3", "R3")
+    /** The Xbox layout's controls (other controller types list theirs in [ControllerType.controlIds]). */
+    val ALL = ControllerType.Xbox.controlIds
 }
 
 /**
@@ -54,8 +55,18 @@ data class Profile(
     val stickReturnToCenter: Boolean = true,
     /** Id of the [Skin] used to draw this profile; falls back to Classic when the skin no longer exists. */
     val skinId: String = Skins.CLASSIC_ID,
+    /** Which controller is drawn and laid out (Xbox / Racing / Fighting); the wire state is the same for all. */
+    val controllerType: ControllerType = ControllerType.Xbox,
+    /** Art printed on the controller shell. */
+    val background: Background = Background.None,
+    /** Steering wheel (Racing): full lock-to-lock rotation in degrees, and whether it springs back when released. */
+    val wheelLockDeg: Float = WHEEL_DEFAULT_LOCK,
+    val wheelSelfCenter: Boolean = true,
 ) {
     companion object {
+        const val WHEEL_MIN_LOCK = 180f
+        const val WHEEL_MAX_LOCK = 900f
+        const val WHEEL_DEFAULT_LOCK = 540f
         const val MIN_SCALE = 0.5f
         const val MAX_SCALE = 2f
         const val MIN_GLOBAL_SCALE = 0.6f
@@ -67,28 +78,31 @@ data class Profile(
         const val MAX_NAME = 40
     }
 
-    fun override(controlId: String): ControlOverride = controls[controlId] ?: ControlOverride()
+    fun override(controlId: String): ControlOverride = controls[controllerType.key(controlId)] ?: ControlOverride()
 
     /** Returns a copy with [controlId] customised; default-valued overrides are dropped to keep the file small. */
     fun withOverride(controlId: String, o: ControlOverride): Profile {
         val s = o.sanitized()
-        return copy(controls = if (s.isDefault) controls - controlId else controls + (controlId to s))
+        val k = controllerType.key(controlId)
+        return copy(controls = if (s.isDefault) controls - k else controls + (k to s))
     }
 
-    /** Back to the standard layout and tuning, keeping [id], [name] and the chosen skin. */
-    fun resetToDefault(): Profile = Profile(id = id, name = name, skinId = skinId)
+    /** Back to the standard layout and tuning, keeping [id], [name] and the look (skin, controller type, background). */
+    fun resetToDefault(): Profile = Profile(id = id, name = name, skinId = skinId, controllerType = controllerType, background = background)
 
-    /** Layout only (positions, sizes, visibility, opacity per control, global scale, handedness). */
-    fun resetLayout(): Profile = copy(controls = emptyMap(), globalScale = 1f, leftHanded = false)
+    /** Layout only (positions, sizes, visibility, opacity per control, global scale, handedness) of the current controller type. */
+    fun resetLayout(): Profile = copy(controls = controls.filterKeys { !controllerType.owns(it) }, globalScale = 1f, leftHanded = false)
 
     fun sanitized(): Profile = copy(
         name = name.trim().take(MAX_NAME).ifEmpty { "Profile" },
-        controls = controls.filterKeys { it in ControlIds.ALL }.mapValues { it.value.sanitized() }.filterValues { !it.isDefault },
+        controls = controls.filterKeys { it in ControllerType.allKeys }.mapValues { it.value.sanitized() }.filterValues { !it.isDefault },
         globalScale = globalScale.coerceIn(MIN_GLOBAL_SCALE, MAX_GLOBAL_SCALE),
         opacity = opacity.coerceIn(MIN_OPACITY, 1f),
         deadZone = deadZone.coerceIn(0f, MAX_DEADZONE),
         sensitivity = sensitivity.coerceIn(MIN_SENS, MAX_SENS),
         skinId = skinId.take(Skin.MAX_ID).ifBlank { Skins.CLASSIC_ID },
+        background = background.sanitized(),
+        wheelLockDeg = if (wheelLockDeg.isNaN()) WHEEL_DEFAULT_LOCK else wheelLockDeg.coerceIn(WHEEL_MIN_LOCK, WHEEL_MAX_LOCK),
     )
 }
 
@@ -223,13 +237,14 @@ class ProfileBook private constructor(val profiles: List<Profile>, val activeId:
 
 /** JSON (de)serialisation with schema versioning, lenient clamping and corruption detection. */
 object ProfileCodec {
-    const val SCHEMA = 2
+    const val SCHEMA = 3
     private const val EXPORT_TYPE = "phone2gamepad-profile"
     const val MAX_IMPORT_BYTES = 256 * 1024
 
     /**
      * Migrations keyed by the schema version they upgrade *from* (to version + 1).
      * v1 -> v2: profiles gained a skin; existing ones keep the look they had (Classic).
+     * v2 -> v3: profiles gained a controller type and a background; existing ones stay Xbox with no background.
      */
     val MIGRATIONS: Map<Int, (JSONObject) -> JSONObject> = mapOf(
         1 to { root ->
@@ -237,6 +252,15 @@ object ProfileCodec {
                 for (i in 0 until arr.length()) {
                     val p = arr.optJSONObject(i) ?: continue
                     if (!p.has("skin")) p.put("skin", Skins.CLASSIC_ID)
+                }
+            }
+            root
+        },
+        2 to { root ->
+            root.optJSONArray("profiles")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val p = arr.optJSONObject(i) ?: continue
+                    if (!p.has("type")) p.put("type", ControllerType.Xbox.id)
                 }
             }
             root
@@ -269,7 +293,25 @@ object ProfileCodec {
             .put("curve", p.curve.name).put("triggerMode", p.triggerMode.name)
             .put("stickReturnToCenter", p.stickReturnToCenter)
             .put("skin", p.skinId)
+            .put("type", p.controllerType.id)
+            .put("wheelLock", p.wheelLockDeg.toDouble()).put("wheelSelfCenter", p.wheelSelfCenter)
+            .put("background", encodeBackground(p.background))
             .put("controls", controls)
+    }
+
+    private fun encodeBackground(b: Background): JSONObject = JSONObject()
+        .put("kind", b.kind.name).put("ref", b.ref).put("scrim", b.scrim.toDouble()).put("zoom", b.zoom.toDouble())
+        .put("offsetX", b.offsetX.toDouble()).put("offsetY", b.offsetY.toDouble())
+
+    private fun decodeBackground(o: JSONObject?): Background {
+        if (o == null) return Background.None
+        val d = Background()
+        return Background(
+            kind = BackgroundKind.entries.firstOrNull { it.name == o.optString("kind") } ?: BackgroundKind.None,
+            ref = o.optString("ref", "").take(80),
+            scrim = o.float("scrim", d.scrim), zoom = o.float("zoom", d.zoom),
+            offsetX = o.float("offsetX", d.offsetX), offsetY = o.float("offsetY", d.offsetY),
+        ).sanitized()
     }
 
     private fun JSONObject.float(key: String, def: Float): Float {
@@ -285,7 +327,7 @@ object ProfileCodec {
         val d = Profile(id = "", name = "")
         val controls = LinkedHashMap<String, ControlOverride>()
         o.optJSONObject("controls")?.let { co ->
-            for (id in ControlIds.ALL) {
+            for (id in ControllerType.allKeys) {
                 val c = co.optJSONObject(id) ?: continue
                 val fx = c.float("fx", Float.NaN)
                 val fy = c.float("fy", Float.NaN)
@@ -311,6 +353,10 @@ object ProfileCodec {
             triggerMode = o.enum("triggerMode", d.triggerMode),
             stickReturnToCenter = o.optBoolean("stickReturnToCenter", d.stickReturnToCenter),
             skinId = o.optString("skin", d.skinId),
+            controllerType = ControllerType.fromId(o.optString("type", "")),
+            background = decodeBackground(o.optJSONObject("background")),
+            wheelLockDeg = o.float("wheelLock", d.wheelLockDeg),
+            wheelSelfCenter = o.optBoolean("wheelSelfCenter", d.wheelSelfCenter),
         ).sanitized()
     }
 
@@ -353,7 +399,8 @@ object ProfileCodec {
     }
 
     fun encodeExport(p: Profile): String =
-        JSONObject().put("type", EXPORT_TYPE).put("schema", SCHEMA).put("profile", encodeProfile(p)).toString(2)
+        JSONObject().put("type", EXPORT_TYPE).put("schema", SCHEMA)
+            .put("profile", encodeProfile(p.copy(background = p.background.forExport()))).toString(2)
 
     /** Parses an exported profile file; null if it is not one of ours, is too new or too large. The id is not trusted. */
     fun decodeExport(text: String): Profile? {
@@ -363,7 +410,8 @@ object ProfileCodec {
             if (root.optString("type") != EXPORT_TYPE) return null
             val v = root.optInt("schema", -1)
             if (v < 1 || v > SCHEMA) return null
-            decodeProfile(root.getJSONObject("profile"))
+            // A private image file named in someone else's export means nothing here (and is never trusted).
+            decodeProfile(root.getJSONObject("profile")).let { it.copy(background = it.background.forExport()) }
         } catch (e: JSONException) {
             null
         }

@@ -15,6 +15,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -123,6 +124,10 @@ class ConnectionManager(
             } catch (e: Exception) {
                 reason = friendly(e)
             }
+            // disconnect() cancels this job and then sets Idle; an error caused by that cancellation (e.g. "recvfrom failed:
+            // EBADF" from the socket being closed) must not overwrite Idle with Reconnecting, which would leave the app
+            // looking like it is reconnecting forever and stop it from reconnecting when it returns to the foreground.
+            currentCoroutineContext().ensureActive()
             if (fatal) {
                 _state.value = ConnState.Failed(target, reason)
                 _metrics.value = Metrics()

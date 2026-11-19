@@ -33,8 +33,8 @@ fun Modifier.padTouch(
                     if (hit != null && hit.hitDistance(ch.position) != Float.MAX_VALUE) {
                         owner[ch.id] = hit
                         held += hit
-                        pad.apply(hit, ch.position, t)
-                        if (hit.kind == Kind.Button) onButtonDown()
+                        pad.press(hit, ch.position, t)
+                        if (hit.kind == Kind.Button || hit.kind == Kind.TriggerButton || hit.kind == Kind.Toggle) onButtonDown()
                     }
                 } else if (ch.pressed) {
                     owner[ch.id]?.let { pad.apply(it, ch.position, t) }

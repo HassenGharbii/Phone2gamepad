@@ -12,12 +12,14 @@ Legend: ✅ built and tested · 🟡 built, partially verified · ⬜ not starte
 
 - 🟡 Android skins: 8 bundled original vector skins, per-profile selection, gallery, custom skin creator, `.p2gskin` export/import (data-only, strict validation); in-game Menu → Edit layout / Skins (123 JVM tests; gallery, editor preview and menu checked on a real phone; creator and file import/export not hand-checked)
 
+- 🟡 Android controller types: Xbox, Racing (touch wheel, analog pedals, paddle shifters) and Fighting (big 8-way pad, six domed attack buttons, optional turbo) drawn as controller shells with built-in vector art or a private picture printed on them; stored per profile; 149 JVM tests; wheel, pedals and fighting buttons checked through XInput on a real phone; Tuning wheel sliders and multi-finger wheel+pedal use not hand-checked
+
 ## Not yet built
 - ⬜ Online skin catalog / marketplace (deliberately not built: needs an opt-in, review and moderation design first)
 - ⬜ Online skin catalog (opt-in; needs a separate privacy/security decision — skins are shared as `.p2gskin` files for now)
 - ⬜ QR pairing
 - ⬜ Installer, release signing, clean-machine test, long-run stability test, real-game test
-- ⬜ Advanced: gyro, turbo, macros, USB transport, multi-phone, PC→phone vibration, extra layouts
+- ⬜ Advanced: gyro, turbo, macros, USB transport, multi-phone, PC→phone vibration, more controller types (e.g. flight stick)
 
 ## Known limits
 UDP input is authenticated, not encrypted. ViGEmBus is retired upstream. Tested only on one phone (Android 14) and one PC.

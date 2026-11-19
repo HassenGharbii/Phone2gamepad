@@ -132,3 +132,20 @@ Online skin catalog: **not implemented** (the gallery says so); skins are shared
 ## Browser gamepad tester (reported by the owner, 2026-11-19)
 
 The owner reports the virtual controller works correctly on hardwaretester.com/gamepad (browser Gamepad API, which reads the XInput device) with the phone. This was not observed by the author of this section; details (which inputs, latency readout) were not provided. A real game and `joy.cpl` remain untested.
+
+## Android round 4: controller types and backgrounds (2026-11-19)
+
+**Tests:** 149 JVM unit tests pass (26 new in `ControllerTypeTest`): per-type control sets and output mapping, no overlaps / in-bounds layouts on wide phones, steering maths (rotation to axis, clamp at lock, self-centering, drag tracking, hub dead-zone), pedal ranges, fighting 8-way D-pad sectors, turbo pulse timing and reset, per-type override storage, profile schema 2 to 3 migration (existing profiles stay Xbox), background reference validation (path traversal etc.), export drops private pictures, image size limits.
+
+**Verified on the real phone** (Infinix, Android 14, update installed with `adb install -r`, connected to the real PC, output read through `XInputGetState`):
+- Type picker with preview thumbnails for Xbox / Racing / Fighting; the choice persists across an app reinstall.
+- Racing: swiping on the wheel gave left-stick X ramping to 10319 and the wheel springs back to 0 on release; the GAS pedal ramped RT 34 to 187; the BRAKE pedal ramped LT 75 to 246.
+- Fighting: RB = 0x0200, RT = 255, D-pad right+down = 0x000A, D-pad left = 0x0004, A = 0x1000; with the turbo latch on, a held A pulsed 0x1000/0x0000 repeatedly and stopped when turbo was switched off.
+- Background art: built-in Aurora / Circuit on all types; a 4000x2600 test picture chosen through the system file picker was downscaled, stored privately and printed on the shell. An 8x8 picture and a non-image file were rejected with a clear message and nothing crashed (logcat clean).
+- The layout editor opens on the Fighting type with the picture printed on the shell.
+- Xbox layout is unchanged (A press still gives 0x1000).
+
+**Bug found and fixed on the way:** leaving the app for the system file picker (or any other app) while on the gamepad screen could leave the status stuck on "reconnecting (attempt 1) ... recvfrom failed: EBADF" and never reconnect, because the error from the socket being closed overwrote the Idle state after `disconnect()`. `ConnectionManager.runLoop` now stops if its job was cancelled before touching the state. Verified once on the phone (picker opened and cancelled, the gamepad reconnected on its own); there is no unit test for this race.
+
+**Not verified:** multi-finger use of the wheel with pedals at the same time (adb cannot send several fingers), the Tuning screen's wheel sliders, a skin applied on the new controller types, whether the Racing paddle shifters and the Fighting LB/LT/Start/Back work on the phone (covered by unit tests only), pinch-resize in the editor, other screen sizes, a real game.
+Test leftovers: the phone's active profile "My layout (2)" was used for the tests and put back to Xbox with no background.

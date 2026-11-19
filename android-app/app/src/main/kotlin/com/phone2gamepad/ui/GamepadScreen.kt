@@ -26,6 +26,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -64,7 +66,9 @@ import com.phone2gamepad.AppViewModel
 import com.phone2gamepad.net.ConnState
 import com.phone2gamepad.protocol.Dpad
 import com.phone2gamepad.data.ColorSlot
+import com.phone2gamepad.data.ControllerType
 import com.phone2gamepad.data.ProfileBook
+import com.phone2gamepad.protocol.ControllerState
 import kotlin.math.min
 
 private fun transportLabel(ctx: Context): String {
@@ -95,6 +99,8 @@ fun GamepadScreen(vm: AppViewModel) {
     var generation by remember { mutableIntStateOf(0) }
     var overlayVisible by remember { mutableStateOf(settings.showOverlay) }
     var menuOpen by remember { mutableStateOf(false) }
+    var appearanceOpen by remember { mutableStateOf(false) }
+    val bgImage = rememberBackgroundImage(vm, profile.background)
 
     // Landscape + immersive.
     LandscapeImmersiveEffect()
@@ -120,6 +126,10 @@ fun GamepadScreen(vm: AppViewModel) {
             vm.connection.input.releaseAll()
         }
     }
+    // Switching controller type rebuilds every control: release everything so no input can stay stuck.
+    LaunchedEffect(profile.controllerType) {
+        pad.reset(); vm.connection.input.releaseAll(); generation++; redraw++
+    }
     // Neutralize on any loss of connection.
     DisposableEffect(conn) {
         if (conn !is ConnState.Connected) {
@@ -137,7 +147,29 @@ fun GamepadScreen(vm: AppViewModel) {
     val connected = conn is ConnState.Connected
     val measurer = rememberTextMeasurer()
 
+    // Frame ticker for the controllers that animate by themselves: the racing wheel springs back when released and the
+    // fighting turbo pulses held buttons. Only changed states are sent.
+    LaunchedEffect(profile.controllerType, connected) {
+        if (!connected || profile.controllerType == ControllerType.Xbox) return@LaunchedEffect
+        var last = 0L
+        var sent: ControllerState? = null
+        while (true) {
+            withFrameNanos { now ->
+                val dt = if (last == 0L) 0f else (now - last) / 1_000_000_000f
+                last = now
+                val moved = pad.tick(dt, liveTuning.value)
+                val st = pad.toControllerState()
+                if (moved || st != sent) {
+                    sent = st
+                    vm.connection.input.set(st)
+                    redraw++
+                }
+            }
+        }
+    }
+
     Box(Modifier.fillMaxSize().background(skin.col(ColorSlot.Background))) {
+        Canvas(Modifier.fillMaxSize()) { drawControllerBody(profile.controllerType, skin, profile.background, bgImage) }
         Canvas(
             Modifier
                 .fillMaxSize()
@@ -150,7 +182,7 @@ fun GamepadScreen(vm: AppViewModel) {
                 )
         ) {
             redraw // read to subscribe to redraws
-            for (c in controls) drawControlAlpha(c, pad, measurer, skin)
+            for (c in controls) drawControlAlpha(c, pad, measurer, skin, 1f, profile.controllerType.domedButtons)
         }
 
         // Status overlay (real values or "---").
@@ -188,6 +220,12 @@ fun GamepadScreen(vm: AppViewModel) {
                         pad.reset(); redraw++
                         vm.openLayoutEditorFromGamepad()
                     })
+                    DropdownMenuItem(text = { Text("Controller & background") }, onClick = {
+                        menuOpen = false
+                        pad.reset(); redraw++
+                        vm.connection.input.releaseAll()
+                        appearanceOpen = true
+                    })
                     DropdownMenuItem(text = { Text("Skins") }, onClick = {
                         menuOpen = false
                         pad.reset(); redraw++
@@ -200,6 +238,17 @@ fun GamepadScreen(vm: AppViewModel) {
                 Text("Exit", fontSize = 12.sp, color = Palette.Danger)
             }
         }
+    }
+
+    if (appearanceOpen) {
+        // Edits go straight to the stored profile (only the changed look fields), like the tuning screen.
+        AppearanceDialog(
+            vm, profile, skin,
+            onChange = { np ->
+                vm.editProfile(profile.id) { it.copy(controllerType = np.controllerType, background = np.background) }
+            },
+            onClose = { appearanceOpen = false },
+        )
     }
 }
 

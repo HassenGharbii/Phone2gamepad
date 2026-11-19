@@ -5,12 +5,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
@@ -80,16 +83,32 @@ private fun DrawScope.drawSkinShape(shape: SkinShape, b: FloatArray, fill: Color
 }
 
 /** Draws [c] with its per-control opacity (a layer is only used when it is not fully opaque). */
-internal fun DrawScope.drawControlAlpha(c: Control, pad: PadState, m: TextMeasurer, skin: Skin, extraAlpha: Float = 1f) {
+internal fun DrawScope.drawControlAlpha(c: Control, pad: PadState, m: TextMeasurer, skin: Skin, extraAlpha: Float = 1f, dome: Boolean = false) {
     val a = (c.opacity * extraAlpha).coerceIn(0f, 1f)
     if (a >= 0.999f) {
-        drawControl(c, pad, m, skin)
+        drawControl(c, pad, m, skin, dome)
         return
     }
     val canvas = drawContext.canvas
     canvas.saveLayer(Rect(0f, 0f, size.width, size.height), Paint().apply { alpha = a })
-    drawControl(c, pad, m, skin)
+    drawControl(c, pad, m, skin, dome)
     canvas.restore()
+}
+
+/** Arcade-button look for a round control: a highlight on the upper left, a dark rim and a lower shade. */
+private fun DrawScope.drawDome(center: Offset, r: Float, on: Boolean) {
+    drawCircle(
+        Brush.radialGradient(
+            listOf(Color.White.copy(alpha = if (on) 0.18f else 0.42f), Color.Transparent),
+            center = center + Offset(-r * 0.30f, -r * 0.38f), radius = r * 1.05f,
+        ),
+        r, center,
+    )
+    drawCircle(
+        Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = if (on) 0.15f else 0.32f)), center.y - r, center.y + r),
+        r, center,
+    )
+    drawCircle(Color.Black.copy(alpha = 0.45f), r, center, style = Stroke(r * 0.07f))
 }
 
 private fun faceSlot(id: String): ColorSlot = when (id) {
@@ -99,7 +118,7 @@ private fun faceSlot(id: String): ColorSlot = when (id) {
     else -> ColorSlot.FaceY
 }
 
-internal fun DrawScope.drawControl(c: Control, pad: PadState, m: TextMeasurer, skin: Skin) {
+internal fun DrawScope.drawControl(c: Control, pad: PadState, m: TextMeasurer, skin: Skin, dome: Boolean = false) {
     val unit = min(size.width, size.height)
     val k = unit / 1080f // outline widths are defined for a 1080 px short side
     val ow = skin.outlineWidth * k
@@ -114,18 +133,22 @@ internal fun DrawScope.drawControl(c: Control, pad: PadState, m: TextMeasurer, s
                 val slot = faceSlot(c.id)
                 val face = skin.col(slot)
                 val idleFill = Color(SkinColor.faceIdleFill(skin, slot))
-                drawSkinShape(skin.faceShape, box, if (on) face else idleFill, face, ow * 2f)
-                label(m, skin, c.label, c.center(), unit * 0.06f, if (on) readable(face) else labelColor)
+                // Domed controllers show solid, bright caps (like arcade buttons) instead of the outlined idle look.
+                val fill = if (on) face else if (dome) mixColor(face, Color.Black, 0.10f) else idleFill
+                drawSkinShape(if (dome) SkinShape.Circle else skin.faceShape, box, fill, face, ow * 2f)
+                if (dome) drawDome(c.center(), c.r, on)
+                label(m, skin, c.label, c.center(), unit * (if (dome) 0.05f else 0.06f), if (on || dome) readable(fill) else labelColor)
             } else {
                 val idle = skin.col(if (c.id == "LB" || c.id == "RB") ColorSlot.Bumper else ColorSlot.ButtonIdle)
                 val fill = if (on) pressed else idle
-                drawSkinShape(skin.buttonShape, box, fill, outline, ow)
+                drawSkinShape(if (dome && c.isRound) SkinShape.Circle else skin.buttonShape, box, fill, outline, ow)
+                if (dome && c.isRound) drawDome(c.center(), c.r, on)
                 val labelPx = if (c.isRound) unit * 0.032f else unit * 0.04f
                 label(m, skin, c.label, c.center(), labelPx, if (on) readable(pressed) else labelColor)
             }
         }
         Kind.Stick -> {
-            val knob = if (c.id == "LS") pad.lKnob else pad.rKnob
+            val knob = if (c.target == "LS") pad.lKnob else pad.rKnob
             val active = knob != Offset.Zero
             drawSkinShape(skin.padShape, box, skin.col(ColorSlot.StickBase), skin.col(ColorSlot.StickRing), ow * 1.5f)
             val knobFill = if (active) skin.col(ColorSlot.Accent) else skin.col(ColorSlot.StickKnob)
@@ -137,7 +160,12 @@ internal fun DrawScope.drawControl(c: Control, pad: PadState, m: TextMeasurer, s
             label(m, skin, c.label, kc, unit * 0.05f, onKnob.copy(alpha = 0.85f))
         }
         Kind.Dpad -> {
-            drawSkinShape(skin.padShape, box, skin.col(ColorSlot.Dpad), skin.col(ColorSlot.StickRing), ow * 1.5f)
+            drawSkinShape(if (dome) SkinShape.Circle else skin.padShape, box, skin.col(ColorSlot.Dpad), skin.col(ColorSlot.StickRing), ow * 1.5f)
+            if (dome) {
+                // Recessed disc: dark outer ring and a subtle bevel so it reads as a moulded 8-way pad.
+                drawCircle(Color.Black.copy(alpha = 0.55f), c.r, c.center(), style = Stroke(c.r * 0.07f))
+                drawCircle(Color.White.copy(alpha = 0.10f), c.r * 0.93f, c.center(), style = Stroke(c.r * 0.02f))
+            }
             val arm = c.r * 0.34f
             val len = c.r * 0.78f
             val idle = skin.col(ColorSlot.StickKnob)
@@ -155,7 +183,7 @@ internal fun DrawScope.drawControl(c: Control, pad: PadState, m: TextMeasurer, s
             armRect(1f, 0f, (pad.dpad and Dpad.RIGHT) != 0)
         }
         Kind.Trigger -> {
-            val v = (if (c.id == "LT") pad.lt else pad.rt) / 255f
+            val v = (if (c.target == "LT") pad.lt else pad.rt) / 255f
             drawSkinShape(skin.buttonShape, box, skin.col(ColorSlot.Trigger), null, 0f)
             if (v > 0f) clipRect(box[0], box[1], box[2], box[1] + (box[3] - box[1]) * v) {
                 drawSkinShape(skin.buttonShape, box, pressed, null, 0f)
@@ -163,7 +191,64 @@ internal fun DrawScope.drawControl(c: Control, pad: PadState, m: TextMeasurer, s
             drawSkinShape(skin.buttonShape, box, null, outline, ow)
             label(m, skin, c.label, c.center(), unit * 0.04f, if (v > 0.5f) readable(pressed) else labelColor)
         }
+        Kind.TriggerButton -> {
+            val on = (if (c.target == "LT") pad.lt else pad.rt) > 0
+            val idle = skin.col(ColorSlot.Bumper)
+            drawSkinShape(SkinShape.Circle, box, if (on) pressed else idle, outline, ow)
+            if (dome) drawDome(c.center(), c.r, on)
+            label(m, skin, c.label, c.center(), if (c.r > unit * 0.07f) unit * 0.05f else unit * 0.032f, if (on) readable(pressed) else labelColor)
+        }
+        Kind.Toggle -> {
+            val on = pad.turboOn
+            val accent = skin.col(ColorSlot.Accent)
+            val fill = if (on) accent else skin.col(ColorSlot.ButtonIdle)
+            drawSkinShape(SkinShape.Circle, box, fill, if (on) accent else outline, ow * 1.5f)
+            if (dome) drawDome(c.center(), c.r, on)
+            label(m, skin, c.label, c.center(), unit * 0.028f, if (on) readable(accent) else labelColor)
+        }
+        Kind.Pedal -> {
+            val v = (if (c.target == "LT") pad.lt else pad.rt) / 255f
+            val tl = Offset(box[0], box[1])
+            val sz = Size(box[2] - box[0], box[3] - box[1])
+            val cr = CornerRadius(min(sz.width, sz.height) * 0.22f)
+            drawRoundRect(skin.col(ColorSlot.Trigger), tl, sz, cr)
+            // Pressed amount fills from the bottom (the pedal hinge).
+            if (v > 0f) clipRect(box[0], box[3] - sz.height * v, box[2], box[3]) { drawRoundRect(pressed, tl, sz, cr) }
+            // Anti-slip ribs.
+            val ribs = 9
+            for (i in 1 until ribs) {
+                val yy = box[1] + sz.height * i / ribs
+                drawLine(Color.Black.copy(alpha = 0.28f), Offset(box[0] + sz.width * 0.14f, yy), Offset(box[2] - sz.width * 0.14f, yy), strokeWidth = ow.coerceAtLeast(2f), cap = StrokeCap.Round)
+            }
+            drawRoundRect(outline, tl, sz, cr, style = Stroke(ow.coerceAtLeast(2f)))
+            label(m, skin, c.label, Offset(c.cx, box[3] - sz.height * 0.07f), unit * 0.03f, if (v > 0.12f) readable(pressed) else labelColor)
+        }
+        Kind.Wheel -> {
+            val ctr = c.center()
+            val rimW = c.r * 0.16f
+            val rimColor = skin.col(ColorSlot.StickKnob)
+            val baseColor = skin.col(ColorSlot.StickBase)
+            drawCircle(baseColor.copy(alpha = 0.55f), c.r, ctr)
+            drawCircle(Color.Black.copy(alpha = 0.35f), c.r * 1.01f, ctr, style = Stroke(c.r * 0.03f))
+            // Everything below turns with the wheel.
+            rotate(pad.wheelRot, ctr) {
+                drawCircle(rimColor, c.r - rimW / 2f, ctr, style = Stroke(rimW))
+                // Hand grip texture on the rim.
+                drawCircle(Color.Black.copy(alpha = 0.28f), c.r - rimW / 2f, ctr, style = Stroke(rimW * 0.55f, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(rimW * 0.5f, rimW * 0.5f))))
+                val spokeW = c.r * 0.13f
+                val inner = c.r - rimW
+                drawLine(rimColor, ctr, ctr + Offset(-inner, 0f), strokeWidth = spokeW, cap = StrokeCap.Round)
+                drawLine(rimColor, ctr, ctr + Offset(inner, 0f), strokeWidth = spokeW, cap = StrokeCap.Round)
+                drawLine(rimColor, ctr, ctr + Offset(0f, inner), strokeWidth = spokeW, cap = StrokeCap.Round)
+                drawCircle(baseColor, c.r * 0.26f, ctr)
+                drawCircle(rimColor, c.r * 0.26f, ctr, style = Stroke(c.r * 0.03f))
+                // Centre mark at 12 o'clock so the turn is visible.
+                drawLine(skin.col(ColorSlot.Accent), ctr + Offset(0f, -c.r + rimW * 0.1f), ctr + Offset(0f, -c.r + rimW * 0.95f), strokeWidth = c.r * 0.045f, cap = StrokeCap.Round)
+            }
+        }
     }
 }
+
+private fun mixColor(a: Color, b: Color, t: Float): Color = androidx.compose.ui.graphics.lerp(a, b, t)
 
 internal fun Control.center() = Offset(cx, cy)

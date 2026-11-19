@@ -74,8 +74,10 @@ fun LayoutEditorScreen(vm: AppViewModel) {
     var selected by remember(stored.id) { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf(false) }
     var skinPicker by remember { mutableStateOf(false) }
+    var appearance by remember { mutableStateOf(false) }
     val library by vm.skins.collectAsState()
     val skin = library.resolve(work.skinId)
+    val bgImage = rememberBackgroundImage(vm, work.background)
     var options by remember { mutableStateOf(false) }
     var confirmRestore by remember { mutableStateOf(false) }
     var hint by remember { mutableStateOf<String?>(null) }
@@ -143,6 +145,7 @@ fun LayoutEditorScreen(vm: AppViewModel) {
     }
 
     Box(Modifier.fillMaxSize().background(skin.col(ColorSlot.Background))) {
+        Canvas(Modifier.fillMaxSize()) { drawControllerBody(work.controllerType, skin, work.background, bgImage) }
         Canvas(
             Modifier
                 .fillMaxSize()
@@ -202,11 +205,11 @@ fun LayoutEditorScreen(vm: AppViewModel) {
         ) {
             redraw // subscribe to preview redraws
             if (preview) {
-                for (c in visibleOnly) drawControlAlpha(c, pad, measurer, skin)
+                for (c in visibleOnly) drawControlAlpha(c, pad, measurer, skin, 1f, work.controllerType.domedButtons)
             } else {
                 val idle = PadState()
                 for (c in all) {
-                    drawControlAlpha(c, idle, measurer, skin, if (c.visible) 1f else 0.28f)
+                    drawControlAlpha(c, idle, measurer, skin, if (c.visible) 1f else 0.28f, work.controllerType.domedButtons)
                     val bx = c.box()
                     if (!c.visible) {
                         drawRoundRect(
@@ -243,6 +246,9 @@ fun LayoutEditorScreen(vm: AppViewModel) {
             }
             TextButton(onClick = { skinPicker = !skinPicker }, contentPadding = PaddingValues(horizontal = 8.dp)) {
                 Text(if (skinPicker) "Hide skins" else "Skin", fontSize = 13.sp)
+            }
+            TextButton(onClick = { appearance = true; pad.reset() }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text("Type", fontSize = 13.sp)
             }
             if (!preview) TextButton(onClick = { options = !options }, contentPadding = PaddingValues(horizontal = 8.dp)) {
                 Text(if (options) "Hide options" else "Options", fontSize = 13.sp)
@@ -339,6 +345,18 @@ fun LayoutEditorScreen(vm: AppViewModel) {
                 }
             }
         }
+    }
+
+    if (appearance) {
+        // The editor works on a copy of the profile; the type/background choice joins the other edits and is saved with Done.
+        AppearanceDialog(
+            vm, work, skin,
+            onChange = { np ->
+                if (np.controllerType != work.controllerType) selected = null
+                work = work.copy(controllerType = np.controllerType, background = np.background)
+            },
+            onClose = { appearance = false },
+        )
     }
 
     if (confirmRestore) {
